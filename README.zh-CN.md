@@ -24,9 +24,9 @@ pi install npm:pi-file-diff
 
 - [它是什么](#它是什么)
 - [为什么创建它](#为什么创建它)
+- [演示](#演示)
 - [与现有 Pi 插件的定位对比](#与现有-pi-插件的定位对比)
 - [安装](#安装)
-- [演示](#演示)
 - [命令](#命令)
 - [配置](#配置)
 - [追踪原理](#追踪原理)
@@ -36,10 +36,10 @@ pi install npm:pi-file-diff
 
 Pi agent 可以通过 `write`、`edit` 修改文件，也可以通过 shell 间接修改。`pi-file-diff` 会在一次对话中记录这些变化，并以两个层次呈现：
 
-1. **自动任务回执**：一段用户可见任务真正稳定后，自动给出一份简洁的文件清单与总 `+/-` 行数。重试、压缩后的重跑、排队 follow-up 会合并为同一份回执，不会产生重叠的多次汇总。
+1. **自动任务回执**：每一轮发生文件改动的用户可见任务真正稳定结束后，`pi-file-diff` 都会**自动追加**一份简洁的文件清单与总 `+/-` 行数；无需输入命令或额外提示。重试、压缩后的重跑、排队 follow-up 会合并为同一份回执，不会产生重叠的多次汇总。
 2. **交互式查看面板**：可浏览全部改动文件，并在不离开终端的情况下查看完整补丁。面板提供独立的 diff 标记栏、行号和分页，便于审阅多文件任务。
 
-摘要以 TUI 条目形式追加，不会重新进入模型上下文，也不会因为展示回执而额外唤醒 agent。
+摘要以 TUI 条目形式追加，不会重新进入模型上下文，也不会因为展示回执而额外唤醒 agent。`/file-diff` 仅用于你按需回看当前对话累计的改动，并不是触发自动回执的前提。
 
 ## 为什么创建它
 
@@ -52,6 +52,34 @@ Pi agent 可以通过 `write`、`edit` 修改文件，也可以通过 shell 间�
 
 `pi-file-diff` 专注于这个交接时刻：默认低打扰地给出任务结束回执，再由你决定是否深入到某个文件的差异。
 
+## 演示
+
+从任务结束时自动追加的回执，到逐文件完整补丁，整个审阅流程都在 Pi 的终端界面内完成。
+
+### 1. 任务结束回执
+
+每轮发生文件改动的用户可见任务稳定结束后，`pi-file-diff` 都会自动追加这份简洁回执；无需输入命令。
+
+<p align="center">
+  <img src="docs/images/task-receipt.png" alt="pi-file-diff 任务结束回执" width="900">
+</p>
+
+### 2. 文件浏览面板
+
+在回执中按 <kbd>Ctrl</kbd>+<kbd>Q</kbd> 打开交互式文件列表，可审阅全部改动文件；Git 已跟踪与未跟踪路径会分别汇总展示。
+
+<p align="center">
+  <img src="docs/images/file-browser.png" alt="pi-file-diff 文件浏览面板" width="900">
+</p>
+
+### 3. 单文件 Diff
+
+选择一个文件即可查看补丁。增删标记位于独立 gutter，且每行旁会显示对应的旧文件或新文件行号。
+
+<p align="center">
+  <img src="docs/images/per-file-diff.png" alt="pi-file-diff 单文件 diff 视图" width="900">
+</p>
+
 ## 与现有 Pi 插件的定位对比
 
 这些插件解决的是相邻而不相同的问题。请按工作流选择；它们也可以组合使用。
@@ -59,6 +87,7 @@ Pi agent 可以通过 `write`、`edit` 修改文件，也可以通过 shell 间�
 | 需求 | `pi-file-diff` | [`@slix/pi-file-tracker`](https://pi.dev/packages/%40slix/pi-file-tracker) | [`@geminixiang/pi-diff`](https://pi.dev/packages/%40geminixiang/pi-diff) | [`@kkskcs/pi-diff-inline`](https://pi.dev/packages/%40kkskcs/pi-diff-inline) |
 | --- | --- | --- | --- | --- |
 | 主要呈现位置 | 任务结束回执 + 终端 Diff 面板 | 输入框上方持续显示的实时组件 | 浏览器中的 Git Diff 面板 | 对话流内嵌 Diff 渲染 |
+| 初次如何出现 | **自动追加**：每轮有文件改动的稳定任务结束后显示，无需输入命令 | 持续可见的实时组件 | 手动执行 `/diff` 打开面板 | 渲染传入的一段 diff 或两份文本比较 |
 | 主要工作单位 | 一段稳定任务；需要时可回看整场对话累计改动 | 当前会话里实时触及的文件 | 工作区、暂存区和提交历史的 Git Diff | 传入的一段 diff 或两份文本比较 |
 | 是否要求 Git 仓库 | 否。Git 信息仅用于可选分组。 | 否 | 是，其 `/diff` 基于 Git diff | 否 |
 | 审阅交互 | 终端内分页的逐文件 Diff 面板 | 实时状态和文件统计 | 浏览器审阅与评论工作流 | 内嵌 unified / split 渲染 |
@@ -91,40 +120,6 @@ pi install "$(pwd)"
 ```
 
 日常使用请优先通过 npm 安装。
-
-## 演示
-
-此处已经为演示图预留稳定位置，便于后续补图而不改变 README 布局。将图片放入 [`docs/images/`](docs/images/README.md) 并使用下列文件名，注释中的 Markdown 片段即可直接取消注释。
-
-### 1. 任务结束回执
-
-> **截图占位：** `docs/images/task-receipt.png` —— 展示一次多文件任务结束后的简洁汇总。
-
-<!--
-<p align="center">
-  <img src="docs/images/task-receipt.png" alt="pi-file-diff 任务结束回执" width="900">
-</p>
--->
-
-### 2. 文件浏览面板
-
-> **截图占位：** `docs/images/file-browser.png` —— 展示文件列表、分页，以及可用时的已跟踪/未跟踪分组。
-
-<!--
-<p align="center">
-  <img src="docs/images/file-browser.png" alt="pi-file-diff 文件浏览面板" width="900">
-</p>
--->
-
-### 3. 单文件 Diff
-
-> **截图占位：** `docs/images/per-file-diff.png` —— 展示行号与和正文分离的 `+` / `-` 标记栏。
-
-<!--
-<p align="center">
-  <img src="docs/images/per-file-diff.png" alt="pi-file-diff 单文件 diff 视图" width="900">
-</p>
--->
 
 ## 命令
 

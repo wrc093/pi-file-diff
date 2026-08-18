@@ -28,6 +28,26 @@ export interface PanelFile {
   tracked?: boolean;
 }
 
+/**
+ * Keep Git sections contiguous before pagination. The tracker preserves tool
+ * execution order, which can interleave tracked and untracked paths (for
+ * example, write a new file, edit an existing file, then write another).
+ * Rendering that order directly makes the same section heading repeat within
+ * a page. Preserve the original order within each section while placing all
+ * tracked files before untracked files, matching the summary view.
+ */
+function groupFilesByGitStatus(files: readonly PanelFile[]): PanelFile[] {
+  const tracked: PanelFile[] = [];
+  const untracked: PanelFile[] = [];
+
+  for (const file of files) {
+    if (file.tracked === true) tracked.push(file);
+    else untracked.push(file);
+  }
+
+  return tracked.length > 0 && untracked.length > 0 ? [...tracked, ...untracked] : [...files];
+}
+
 type View = "list" | "diff";
 
 const REVERSE_ON = "\x1b[7m";
@@ -230,7 +250,7 @@ export class FileDiffPanel {
     msgs: Messages = enMessages,
     viewportHeight: () => number = () => 0,
   ) {
-    this.files = files;
+    this.files = groupFilesByGitStatus(files);
     this.theme = theme;
     this.keys = keys;
     this.onChange = onChange;

@@ -24,9 +24,9 @@ pi install npm:pi-file-diff
 
 - [What it is](#what-it-is)
 - [Why it exists](#why-it-exists)
+- [Demo](#demo)
 - [How it compares](#how-it-compares)
 - [Install](#install)
-- [Demo](#demo)
 - [Commands](#commands)
 - [Configuration](#configuration)
 - [How tracking works](#how-tracking-works)
@@ -36,10 +36,10 @@ pi install npm:pi-file-diff
 
 Pi agents can edit files through `write` and `edit`, or indirectly through shell commands. `pi-file-diff` records those changes over a conversation and presents them in two layers:
 
-1. **Automatic task receipt** — when a user-visible task fully settles, Pi receives one concise file list with aggregate `+/-` counts. Retries, compaction retries, and queued follow-ups are merged into the same receipt instead of producing overlapping summaries.
+1. **Automatic task receipt** — after every user-visible task that changes files fully settles, `pi-file-diff` automatically appends one concise file list with aggregate `+/-` counts. No command or prompt is required. Retries, compaction retries, and queued follow-ups are merged into the same receipt instead of producing overlapping summaries.
 2. **Interactive review panel** — browse every changed file and inspect the full patch without leaving the terminal. The panel uses a dedicated diff gutter, line numbers, and paging to keep multi-file reviews readable.
 
-The extension is intentionally display-only: summaries are appended as TUI entries and are not injected back into the model context.
+The extension is intentionally display-only: summaries are appended as TUI entries and are not injected back into the model context. `/file-diff` is only for revisiting the current conversation’s accumulated changes on demand; it is never required for the automatic receipt to appear.
 
 ## Why it exists
 
@@ -52,6 +52,34 @@ The answer to “what did the agent actually change?” is often scattered acros
 
 `pi-file-diff` is built around that hand-off moment. It provides a low-noise task-end summary by default, then lets you drill into the affected file when you choose.
 
+## Demo
+
+From the automatic task-end receipt to a full per-file patch, the review flow stays inside Pi’s terminal UI.
+
+### 1. Task-end receipt
+
+After a user-visible task that changes files settles, `pi-file-diff` automatically appends this compact receipt. No command is needed.
+
+<p align="center">
+  <img src="docs/images/task-receipt.png" alt="pi-file-diff task-end receipt" width="900">
+</p>
+
+### 2. File browser
+
+Open the interactive file browser with <kbd>Ctrl</kbd>+<kbd>Q</kbd> from the receipt to review every changed file, with Git-tracked and untracked paths grouped together.
+
+<p align="center">
+  <img src="docs/images/file-browser.png" alt="pi-file-diff file browser" width="900">
+</p>
+
+### 3. Per-file diff
+
+Select a file to inspect its patch. The view keeps additions and deletions in a dedicated gutter and renders the relevant old or new line number alongside each line.
+
+<p align="center">
+  <img src="docs/images/per-file-diff.png" alt="pi-file-diff per-file diff view" width="900">
+</p>
+
 ## How it compares
 
 These extensions solve adjacent, rather than identical, problems. Pick the surface that fits your workflow; they may be useful together.
@@ -59,6 +87,7 @@ These extensions solve adjacent, rather than identical, problems. Pick the surfa
 | Need | `pi-file-diff` | [`@slix/pi-file-tracker`](https://pi.dev/packages/%40slix/pi-file-tracker) | [`@geminixiang/pi-diff`](https://pi.dev/packages/%40geminixiang/pi-diff) | [`@kkskcs/pi-diff-inline`](https://pi.dev/packages/%40kkskcs/pi-diff-inline) |
 | --- | --- | --- | --- | --- |
 | Primary surface | Task-end receipt + terminal diff panel | Persistent live widget above the input | Browser-based Git diff dashboard | Inline diff renderer in the conversation |
+| How the result first appears | **Automatic:** appended after each settled task with file changes; no command required | Continuously visible live widget | Run `/diff` to open the dashboard | Render a supplied diff or text comparison |
 | Main unit of work | A settled task, with conversation history available on demand | Files touched during a live session | Working tree, staged, and commit diffs | A supplied diff or text comparison |
 | Requires a Git repository | No. Git metadata is optional grouping information only. | No | Yes—its `/diff` command wraps Git diffs | No |
 | Review interaction | Paginated terminal per-file diff panel | Live status and file statistics | Browser review workflow and comments | Inline unified or split rendering |
@@ -91,40 +120,6 @@ pi install "$(pwd)"
 ```
 
 The npm package is the supported installation path for normal use.
-
-## Demo
-
-Screenshots are intentionally reserved here so the README keeps a stable layout while demos are being prepared. Add the supplied image files to [`docs/images/`](docs/images/README.md) with the names below; the matching Markdown snippets are ready to uncomment.
-
-### 1. Task-end receipt
-
-> **Screenshot placeholder:** `docs/images/task-receipt.png` — show the compact summary after a task with several changed files.
-
-<!--
-<p align="center">
-  <img src="docs/images/task-receipt.png" alt="pi-file-diff task-end receipt" width="900">
-</p>
--->
-
-### 2. File browser
-
-> **Screenshot placeholder:** `docs/images/file-browser.png` — show the file list, paging, and tracked/untracked grouping when available.
-
-<!--
-<p align="center">
-  <img src="docs/images/file-browser.png" alt="pi-file-diff file browser" width="900">
-</p>
--->
-
-### 3. Per-file diff
-
-> **Screenshot placeholder:** `docs/images/per-file-diff.png` — show line numbers and the separate `+`/`-` gutter in the diff view.
-
-<!--
-<p align="center">
-  <img src="docs/images/per-file-diff.png" alt="pi-file-diff per-file diff view" width="900">
-</p>
--->
 
 ## Commands
 

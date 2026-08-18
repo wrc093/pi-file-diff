@@ -1,13 +1,11 @@
 # README demo assets
 
-This directory holds the screenshots embedded in the project README files.
+This directory holds the screenshots embedded in the project README files. They document the complete review flow, from the automatic task-end receipt to a selected file’s detailed patch.
 
-| File | Placement | What to capture |
+| File | Placement | What it shows |
 | --- | --- | --- |
-| `task-receipt.png` | `README.md` / `README.zh-CN.md` → **Demo 1** | A completed task’s compact file-change receipt. |
-| `file-browser.png` | **Demo 2** | The file list view, ideally with enough files to show paging or grouping. |
+| `task-receipt.png` | `README.md` / `README.zh-CN.md` → **Demo 1** | The automatically appended task-end file-change receipt. |
+| `file-browser.png` | **Demo 2** | The interactive file list opened from the receipt, including grouped tracked and untracked files. |
 | `per-file-diff.png` | **Demo 3** | The detail diff view with line numbers and its dedicated add/remove gutter. |
 
-Recommended format: PNG, terminal content cropped tightly, no sensitive paths, tokens, or personal data visible. A width of 1600–2000 px keeps text sharp on GitHub while the README caps display width at 900 px.
-
-After adding a file, replace the matching visible placeholder in both README files by uncommenting the adjacent `<img>` block.
+The PNGs are approximately 1900 px wide and the README caps their display width at 900 px, keeping terminal text sharp on GitHub. Future replacements should remain tightly cropped and exclude sensitive paths, tokens, and personal data.

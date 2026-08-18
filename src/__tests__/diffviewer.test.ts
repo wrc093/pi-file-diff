@@ -277,6 +277,26 @@ describe("FileDiffPanel", () => {
     assert.equal(out.filter((l) => l.includes("\x1b[7m")).length, 1);
   });
 
+  it("groups interleaved tracked and untracked files into one section each", () => {
+    const { panel } = makePanel([
+      { path: "new-first.ts", tracked: false, change: change({ firstTouchedAt: 1 }) },
+      { path: "tracked-first.ts", tracked: true, change: change({ firstTouchedAt: 2 }) },
+      { path: "new-second.ts", tracked: false, change: change({ firstTouchedAt: 3 }) },
+      { path: "tracked-second.ts", tracked: true, change: change({ firstTouchedAt: 4 }) },
+    ]);
+
+    const out = panel.render(80);
+    const trackedHeader = "git tracked files:";
+    const untrackedHeader = "git untracked files:";
+    assert.equal(out.filter((line) => line.includes(trackedHeader)).length, 1);
+    assert.equal(out.filter((line) => line.includes(untrackedHeader)).length, 1);
+
+    const position = (path: string) => out.findIndex((line) => line.includes(path));
+    assert.ok(position("tracked-first.ts") < position("tracked-second.ts"), "tracked order stays stable");
+    assert.ok(position("tracked-second.ts") < position("new-first.ts"), "tracked section renders first");
+    assert.ok(position("new-first.ts") < position("new-second.ts"), "untracked order stays stable");
+  });
+
   it("moves selection with arrow keys", () => {
     const { panel, events } = makePanel(sampleFiles());
     panel.handleInput(DOWN); // -> src/new.ts
