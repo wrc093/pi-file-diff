@@ -1,0 +1,44 @@
+{
+  "name": "pi-file-diff",
+  "version": "0.1.0",
+  "description": "pi-coding-agent extension: per-conversation file-change diff summary without git",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "diff",
+    "file-diff"
+  ],
+  "type": "module",
+  "main": "src/index.ts",
+  "files": [
+    "src/*.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/__tests__/*.test.ts\""
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "diff": "^9.0.0"
+  }
+}
