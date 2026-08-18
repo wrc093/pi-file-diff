@@ -1,6 +1,6 @@
 {
   "name": "pi-file-diff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "pi-coding-agent extension: per-conversation file-change diff summary without git",
   "keywords": [
     "pi-package",
@@ -12,9 +12,18 @@
   "main": "src/index.ts",
   "files": [
     "src/*.ts",
+    "docs/images",
     "README.md",
     "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wrc093/pi-file-diff.git"
+  },
+  "homepage": "https://github.com/wrc093/pi-file-diff#readme",
+  "bugs": {
+    "url": "https://github.com/wrc093/pi-file-diff/issues"
+  },
   "pi": {
     "extensions": [
       "./src/index.ts"
