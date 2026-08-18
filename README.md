@@ -27,7 +27,7 @@ pi install npm:pi-file-diff
 - [How it compares](#how-it-compares)
 - [Install](#install)
 - [Demo](#demo)
-- [Commands and controls](#commands-and-controls)
+- [Commands](#commands)
 - [Configuration](#configuration)
 - [How tracking works](#how-tracking-works)
 - [Development](#development)
@@ -37,7 +37,7 @@ pi install npm:pi-file-diff
 Pi agents can edit files through `write` and `edit`, or indirectly through shell commands. `pi-file-diff` records those changes over a conversation and presents them in two layers:
 
 1. **Automatic task receipt** — when a user-visible task fully settles, Pi receives one concise file list with aggregate `+/-` counts. Retries, compaction retries, and queued follow-ups are merged into the same receipt instead of producing overlapping summaries.
-2. **Interactive review panel** — press <kbd>Ctrl</kbd>+<kbd>Q</kbd> on a receipt to browse every changed file. Use a dedicated diff gutter, line numbers, paging, keyboard navigation, and mouse-wheel scrolling to inspect the full patch without leaving the terminal.
+2. **Interactive review panel** — browse every changed file and inspect the full patch without leaving the terminal. The panel uses a dedicated diff gutter, line numbers, and paging to keep multi-file reviews readable.
 
 The extension is intentionally display-only: summaries are appended as TUI entries and are not injected back into the model context.
 
@@ -61,7 +61,7 @@ These extensions solve adjacent, rather than identical, problems. Pick the surfa
 | Primary surface | Task-end receipt + terminal diff panel | Persistent live widget above the input | Browser-based Git diff dashboard | Inline diff renderer in the conversation |
 | Main unit of work | A settled task, with conversation history available on demand | Files touched during a live session | Working tree, staged, and commit diffs | A supplied diff or text comparison |
 | Requires a Git repository | No. Git metadata is optional grouping information only. | No | Yes—its `/diff` command wraps Git diffs | No |
-| Review interaction | Paginated full-screen TUI with keyboard and wheel navigation | Live status and file statistics | Browser review workflow and comments | Inline unified or split rendering |
+| Review interaction | Paginated terminal per-file diff panel | Live status and file statistics | Browser review workflow and comments | Inline unified or split rendering |
 | Best fit | “Show me one reliable receipt when this task is done.” | “Keep a running file-activity widget visible.” | “Review Git changes in a browser.” | “Render a diff block directly in chat.” |
 
 The comparison reflects each package’s public Pi Catalog documentation as of this release; their feature sets can evolve independently.
@@ -108,7 +108,7 @@ Screenshots are intentionally reserved here so the README keeps a stable layout 
 
 ### 2. File browser
 
-> **Screenshot placeholder:** `docs/images/file-browser.png` — show the <kbd>Ctrl</kbd>+<kbd>Q</kbd> list view, paging, and tracked/untracked grouping when available.
+> **Screenshot placeholder:** `docs/images/file-browser.png` — show the file list, paging, and tracked/untracked grouping when available.
 
 <!--
 <p align="center">
@@ -126,20 +126,63 @@ Screenshots are intentionally reserved here so the README keeps a stable layout 
 </p>
 -->
 
-## Commands and controls
+## Commands
 
-| Command or key | What it does | Example |
+The extension has three active commands. They are deliberately separate: one answers *what changed*, one controls *how shell changes are detected*, and one controls *which paths should be ignored*.
+
+### `/file-diff` — inspect the conversation-wide change set
+
+```text
+/file-diff
+```
+
+Use this when you want to manually revisit the changes accumulated in the **current conversation**. It is useful after an automatic receipt has scrolled away, when you have made several follow-up requests and want one consolidated view, or immediately before you review, test, commit, or hand off the work.
+
+Unlike the automatic task receipt, this command is not restricted to the last settled task. It rebuilds the current conversation’s file list from everything the extension has recorded so far, then reports file status and aggregate additions/removals. It is a read-only review action: it does not reset the tracked change set, alter files, or send anything back to the model.
+
+### `/file-diff-mode` — choose shell-change tracking deliberately
+
+```text
+/file-diff-mode [status|auto|on|off]
+```
+
+`write` and `edit` changes are always tracked. This command controls the additional filesystem scan used to discover changes made indirectly by shell commands—such as generated files, redirections, scripts, `sed`, `cp`, or `rm`.
+
+| Mode | When to use it | Result |
 | --- | --- | --- |
-| Automatic receipt | Adds one summary after a task fully settles, but only when the task changed files. | Run an agent task normally. |
-| `/file-diff` | Re-open the full change list accumulated by the current conversation. | `/file-diff` |
-| `/file-diff-mode` | Inspect or switch shell-change tracking without editing JSON by hand. The choice is persisted. | `/file-diff-mode status`<br>`/file-diff-mode off` |
-| `/file-diff-exclude` | Exclude a file or directory from future summaries. Supports relative paths, absolute paths, and `~`; path arguments support <kbd>Tab</kbd> completion. | `/file-diff-exclude .pi-dock/sessions`<br>`/file-diff-exclude remove .pi-dock/sessions` |
-| <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Open the per-file diff panel from a receipt. | On any `pi-file-diff` receipt. |
-| <kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>j</kbd>/<kbd>k</kbd>, mouse wheel | Move between files, or scroll the diff after opening one. | In the panel. |
-| <kbd>Enter</kbd> | Open a selected file’s diff; in the diff view, close the panel. | In the panel. |
-| <kbd>Esc</kbd> | Return from the diff to the list, or close the list. | In the panel. |
+| `status` or no argument | You are unsure why a shell-made file did or did not appear. | Shows the configured mode, workspace-file threshold, and observed workspace size. |
+| `auto` | The default choice for mixed-size projects. | Enables shell tracking below `bashThreshold`; automatically skips the more expensive scan for larger workspaces. |
+| `on` | The workspace is manageable and shell-generated changes are important to review. | Forces shell tracking even above the automatic threshold. This can make task-end scanning slower. |
+| `off` | The workspace is very large, shell output is irrelevant, or you want the lowest possible tracking overhead. | Tracks only Pi-native `write` and `edit` operations; shell-only changes are not added to the receipt. |
 
-> Pi reserves <kbd>Ctrl</kbd>+<kbd>O</kbd> for its built-in tool-output folding shortcut, so this extension deliberately uses <kbd>Ctrl</kbd>+<kbd>Q</kbd>.
+For example:
+
+```text
+/file-diff-mode status
+/file-diff-mode on
+/file-diff-mode auto
+```
+
+The selected mode is saved to `~/.pi/agent/file-diff.json` and applies from the next agent task onward. Use `status` after changing a project or configuration to verify that the chosen trade-off matches the workspace.
+
+### `/file-diff-exclude` — remove known noise from review
+
+```text
+/file-diff-exclude [<path>|remove <path>|clear]
+```
+
+Use exclusions for paths whose churn should never distract from an agent review: generated session logs, caches, lockstep build output, vendor trees, or application data that changes on every run. An exclusion changes only what `pi-file-diff` tracks and displays; it never deletes, moves, or otherwise changes the target files.
+
+Paths may be relative to the current workspace, absolute, or start with `~`. Add either a directory or one file; directory exclusions apply to everything below that directory.
+
+| Intent | Command | When to use it |
+| --- | --- | --- |
+| Add an exclusion | `/file-diff-exclude .pi-dock/sessions` | A noisy path keeps appearing in summaries. |
+| See active exclusions | `/file-diff-exclude` | You want to audit why a path is missing. |
+| Restore one path | `/file-diff-exclude remove .pi-dock/sessions` | The path has become relevant again. |
+| Restore all paths | `/file-diff-exclude clear` | You are switching projects or want the default behavior back. |
+
+The list is persisted in `~/.pi/agent/file-diff.json`. Add exclusions early in a conversation when possible, then use `/file-diff` to confirm that the remaining receipt contains only review-worthy files.
 
 ## Configuration
 
