@@ -14,7 +14,7 @@
   <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-`pi-file-diff` gives every Pi task a compact, reviewable receipt: which files changed, how many lines were added or removed, and—when you need it—the exact per-file diff in a terminal-native panel. It works in ordinary directories as well as Git repositories.
+After every file-changing Pi task settles, `pi-file-diff` automatically appends a compact, reviewable receipt—no command or manual check required. It shows which files changed, how many lines were added or removed, and—when you need it—the exact per-file diff in a terminal-native panel. It works in ordinary directories as well as Git repositories.
 
 ```bash
 pi install npm:pi-file-diff
@@ -50,7 +50,7 @@ The answer to “what did the agent actually change?” is often scattered acros
 - a task involved several tool calls, retries, or follow-up runs;
 - you want a quick receipt first and a diff only when something deserves review.
 
-`pi-file-diff` is built around that hand-off moment. It provides a low-noise task-end summary by default, then lets you drill into the affected file when you choose.
+`pi-file-diff` removes the “remember to check” step. As soon as a file-changing task settles, it automatically appends the receipt—you do not need to type `/file-diff`, inspect Git status, or run any other command. It provides that low-noise task-end summary by default, then lets you drill into an affected file only when you choose.
 
 ## Demo
 
