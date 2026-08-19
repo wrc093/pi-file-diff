@@ -1,6 +1,6 @@
 {
   "name": "pi-file-diff",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "pi-coding-agent extension: per-conversation file-change diff summary without git",
   "keywords": [
     "pi-package",
@@ -27,7 +27,8 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/wrc093/pi-file-diff/main/docs/images/task-receipt.png"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
