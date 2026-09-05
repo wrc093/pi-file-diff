@@ -44,12 +44,8 @@ export interface Messages {
   newFileMarker: string;
   /** Marker for files deleted at the file level. */
   deletedFileMarker: string;
-  /** Marker for directories whose whole subtree was added. */
-  newDirMarker: (n: number) => string;
-  /** Marker for directories whose whole subtree was deleted. */
-  removedDirMarker: (n: number) => string;
-  /** Marker for directories with mixed/differently-changed subtrees. */
-  modifiedDirMarker: (n: number) => string;
+  /** Collapsed-directory marker: changed-file composition (added/deleted/modified). */
+  dirComposition: (counts: Record<"A" | "M" | "D", number>) => string;
   /** Accent-colored key part of the summary hint (e.g. "[ctrl+q]"). */
   summaryHintKey: string;
   /** Dim remainder of the summary hint (leading space included). */
@@ -112,9 +108,13 @@ export const enMessages: Messages = {
   shellTouchedMarker: " (shell-modified)",
   newFileMarker: " (new file)",
   deletedFileMarker: " (deleted)",
-  newDirMarker: (n) => ` (new dir · ${n} files)`,
-  removedDirMarker: (n) => ` (removed dir · ${n} files)`,
-  modifiedDirMarker: (n) => ` (${n} files)`,
+  dirComposition: (counts) => {
+    const parts: string[] = [];
+    if (counts.A > 0) parts.push(`${counts.A} file${counts.A !== 1 ? "s" : ""} added`);
+    if (counts.D > 0) parts.push(`${counts.D} file${counts.D !== 1 ? "s" : ""} deleted`);
+    if (counts.M > 0) parts.push(`${counts.M} file${counts.M !== 1 ? "s" : ""} modified`);
+    return ` (${parts.join(", ")})`;
+  },
   summaryHintKey: "[ctrl+q]",
   summaryHintRest: " open panel · /file-diff: full session changes",
   listFooterRoot: "\u2191\u2193 or wheel: switch \u00b7 Enter: open \u00b7 Esc: close",
@@ -153,9 +153,13 @@ export const zhMessages: Messages = {
   shellTouchedMarker: " (shell 还有改动)",
   newFileMarker: " (新文件)",
   deletedFileMarker: " (已删除)",
-  newDirMarker: (n) => ` (新增目录 · ${n} 个文件)`,
-  removedDirMarker: (n) => ` (已删除目录 · ${n} 个文件)`,
-  modifiedDirMarker: (n) => ` (${n} 个文件)`,
+  dirComposition: (counts) => {
+    const parts: string[] = [];
+    if (counts.A > 0) parts.push(`新增 ${counts.A} 个文件`);
+    if (counts.D > 0) parts.push(`删除 ${counts.D} 个文件`);
+    if (counts.M > 0) parts.push(`修改 ${counts.M} 个文件`);
+    return ` (${parts.join("，")})`;
+  },
   summaryHintKey: "[ctrl+q]",
   summaryHintRest: " 打开面板 · /file-diff 查看会话全量改动",
   listFooterRoot: "\u2191\u2193/滚轮 切换 \u00b7 Enter 打开 \u00b7 Esc 关闭",

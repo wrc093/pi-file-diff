@@ -188,7 +188,7 @@ The list is persisted in `~/.pi/agent/file-diff.json`. Add exclusions early in a
 /file-diff-threshold [<count>|status]
 ```
 
-When a directory accumulates a large number of changed files, the receipt and the `ctrl+q` panel collapse them into one directory entry (a whole new directory becomes a single `+ …/ (new dir · N files)` line). A directory's status merges its subtree: all added → added dir; all deleted → deleted dir; anything else (mixed, or content-only modifications of existing files) → modified dir.
+When a directory accumulates a large number of changed files, the receipt and the `ctrl+q` panel collapse them into one directory entry. The trailing marker lists the subtree's composition, omitting zero counts, e.g. `M src/ +40 -12 (10 files modified, 3 files added)`. A directory's status describes the directory itself: brand-new directory → `+`, removed directory → `-`, and an existing directory that only gained files is still `M` (modified).
 
 Only subdirectories of the current workspace aggregate — the workspace root itself never collapses, and directories below the threshold stay per-file. Inside the panel, select a directory entry and press Enter/ctrl+q to descend; Esc/← returns to the parent level.
 

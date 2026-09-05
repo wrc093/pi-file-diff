@@ -8,9 +8,10 @@
  */
 
 import { readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import { readTextFile } from "./snapshot.ts";
+import type { EntryStatus } from "./render.ts";
 
 export type ChangeKind = "edit" | "write" | "bash";
 
@@ -293,6 +294,58 @@ export class ChangeTracker {
       runStamp: this.runStamp,
       knownContent,
     });
+  }
+
+  /**
+   * Resolve directory-level status (A/M/D) for every ancestor directory of
+   * the tracked changes, comparing directories that existed when THIS run
+   * started (derived from `runSeen`) with the current disk state.
+   *
+   * A directory that already existed and simply gained/lost/modified files
+   * is M — only directories that did not exist at run start are A, and only
+   * directories gone from disk are D. Returns absolute-path -> status; dirs
+   * with unknown baseline (no runSeen) are omitted so callers can fall back
+   * to a children-based heuristic.
+   */
+  async resolveDirStatuses(runSeen: Set<string> | null): Promise<Map<string, EntryStatus>> {
+    const out = new Map<string, EntryStatus>();
+    // Fast baseline lookup: every ancestor dir of every file at run start.
+    const runSeenDirs = new Set<string>();
+    if (runSeen) {
+      for (const p of runSeen) {
+        let parent = dirname(p);
+        while (true) {
+          const up = dirname(parent);
+          if (up === parent) break;
+          runSeenDirs.add(parent);
+          parent = up;
+        }
+      }
+    }
+    const candidateDirs = new Set<string>();
+    for (const c of this.changes.values()) {
+      let parent = dirname(c.path);
+      while (true) {
+        const up = dirname(parent);
+        if (up === parent) break;
+        candidateDirs.add(parent);
+        parent = up;
+      }
+    }
+    for (const dir of candidateDirs) {
+      const existedInitially = runSeen ? runSeenDirs.has(dir) : undefined;
+      let existsNow = false;
+      try {
+        existsNow = (await stat(dir)).isDirectory();
+      } catch {
+        // missing or unreadable — treat as gone
+      }
+      if (existedInitially === undefined) continue; // no baseline — leave to fallback
+      if (existedInitially && !existsNow) out.set(dir, "D");
+      else if (!existedInitially && existsNow) out.set(dir, "A");
+      else out.set(dir, "M");
+    }
+    return out;
   }
 
   /**

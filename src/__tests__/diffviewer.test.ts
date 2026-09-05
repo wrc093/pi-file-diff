@@ -410,7 +410,7 @@ describe("FileDiffPanel directory aggregation", () => {
     }]);
     const out = panel.render(80);
     assert.ok(out.some((l) => l.includes("7 files changed")), "header counts all files");
-    assert.ok(out.some((l) => l.includes("src/") && l.includes("(new dir · 6 files)")));
+    assert.ok(out.some((l) => l.includes("src/") && l.includes("(6 files added)")));
     assert.ok(out.some((l) => l.includes("top.txt")), "root file stays per-file");
     assert.ok(!out.some((l) => l.includes("lib0.ts")), "children hidden behind the dir entry");
   });
@@ -419,7 +419,7 @@ describe("FileDiffPanel directory aggregation", () => {
     const { panel } = makePanel(dirFiles(4));
     const out = panel.render(80);
     assert.ok(out.some((l) => l.includes("lib0.ts")));
-    assert.ok(!out.some((l) => l.includes("(new dir")));
+    assert.ok(!out.some((l) => l.includes("files added")));
   });
 
   it("enter descends into a dir; esc returns; dirs reset selection", () => {
@@ -437,7 +437,7 @@ describe("FileDiffPanel directory aggregation", () => {
 
     panel.handleInput(ESC);
     const back = panel.render(80);
-    assert.ok(back.some((l) => l.includes("src/") && l.includes("(new dir")), "back to the collapsed entry");
+    assert.ok(back.some((l) => l.includes("src/") && l.includes("(6 files added)")), "back to the collapsed entry");
     assert.ok(back.some((l) => l.includes("Esc: close")), "root footer restored");
 
     panel.handleInput(ESC);
@@ -454,7 +454,7 @@ describe("FileDiffPanel directory aggregation", () => {
     const inside = panel.render(80);
     assert.ok(inside.some((l) => l.includes("📁 a/")));
     assert.ok(
-      inside.some((l) => l.includes("a/b/") && l.includes("(new dir · 5 files)")),
+      inside.some((l) => l.includes("a/b/") && l.includes("(5 files added)")),
       "nested dir still collapsed",
     );
     assert.ok(!inside.some((l) => l.includes("f0.ts")), "children hidden behind the nested dir");
@@ -467,7 +467,7 @@ describe("FileDiffPanel directory aggregation", () => {
     ];
     const { panel } = makePanel(mixed);
     const out = panel.render(80);
-    const line = out.find((l) => l.includes("src/") && l.includes("(5 files)"))!;
+    const line = out.find((l) => l.includes("src/") && l.includes("(3 files added, 2 files modified)"))!;
     assert.ok(line.startsWith("\x1b[7m"), "selected render keeps the reverse highlight");
     assert.ok(line.includes("<warning>M</>"), "mixed dir renders the M icon");
   });
@@ -488,7 +488,7 @@ describe("FileDiffPanel directory aggregation", () => {
       3,
     );
     const out = panel3.render(80);
-    assert.ok(out.some((l) => l.includes("src/") && l.includes("(new dir · 3 files)")));
+    assert.ok(out.some((l) => l.includes("src/") && l.includes("(3 files added)")));
     assert.ok(!out.some((l) => l.includes("lib0.ts")));
   });
 });

@@ -334,6 +334,12 @@ describe("buildSummaryText directory entries", () => {
         insertions: status === "D" ? 0 : 12,
         deletions: status === "D" ? 88 : 0,
         fileCount: 6,
+        counts:
+          status === "A"
+            ? { A: 6, D: 0, M: 0 }
+            : status === "D"
+              ? { A: 0, D: 6, M: 0 }
+              : { A: 0, D: 0, M: 6 },
       },
     ],
     totalFiles: 6,
@@ -345,7 +351,7 @@ describe("buildSummaryText directory entries", () => {
     const lines = buildSummaryText(dirPayload("A"));
     const line = lines.find((l) => l.includes("ppt-master/"))!;
     assert.ok(line.startsWith("+ ppt-master/  +12"));
-    assert.ok(line.includes("(new dir · 6 files)"));
+    assert.ok(line.includes("(6 files added)"));
   });
 
   it("renders a deleted directory struck through", () => {
@@ -354,14 +360,14 @@ describe("buildSummaryText directory entries", () => {
     assert.ok(line.startsWith("- "), "minus icon for deleted dirs");
     assert.ok(line.includes("\x1b[9mppt-master/\x1b[29m"), "dir path should be struck through");
     assert.ok(line.includes("-88"));
-    assert.ok(line.includes("(removed dir · 6 files)"));
+    assert.ok(line.includes("(6 files deleted)"));
   });
 
   it("renders a modified directory with M icon and file count", () => {
     const lines = buildSummaryText(dirPayload("M"));
     const line = lines.find((l) => l.includes("ppt-master/"))!;
     assert.ok(line.startsWith("M ppt-master/  +12"));
-    assert.ok(line.includes("(6 files)"));
+    assert.ok(line.includes("(6 files modified)"));
   });
 
   it("shows the shell marker on a directory only when all children share it", () => {
@@ -532,6 +538,40 @@ describe("buildPayload no-diff detection", () => {
   });
 });
 
+describe("dirStatuses baseline-derived directory status", () => {
+  it("existing dir that only gained files renders as M with an added composition", () => {
+    const payload = buildPayload(
+      Array.from({ length: 6 }, (_, i) =>
+        change({ path: `/work/proj/src/n${i}.ts`, kind: "write", insertions: 1, deletions: 0, content: "x\n" }),
+      ),
+      idPath,
+      null,
+      undefined,
+      5,
+      new Map([["src", "M"]]),
+    )!;
+    const line = buildSummaryText(payload).find((l) => l.includes("src/"))!;
+    assert.ok(line.startsWith("M src/"), "existing dir gains M even when every file is new");
+    assert.ok(line.includes("(6 files added)"), "composition still lists the additions");
+  });
+
+  it("removed dir with all-deleted files renders as D", () => {
+    const payload = buildPayload(
+      Array.from({ length: 6 }, (_, i) =>
+        change({ path: `/work/proj/src/n${i}.ts`, kind: "bash", insertions: 0, deletions: 2, fileStatus: "D" }),
+      ),
+      idPath,
+      null,
+      undefined,
+      5,
+      new Map([["src", "D"]]),
+    )!;
+    const line = buildSummaryText(payload).find((l) => l.includes("src/"))!;
+    assert.ok(line.startsWith("- "), "deleted dir keeps the minus icon");
+    assert.ok(line.includes("(6 files deleted)"));
+  });
+});
+
 describe("splitPatchLines jsdiff format", () => {
   it("filters Index:/==== decoration lines", () => {
     const patch = [
@@ -577,7 +617,7 @@ describe("buildSummaryText file-level status", () => {
       entries: [
         { kind: "file", path: "new.ts", status: "A", insertions: 3, deletions: 0, fileCount: 1 },
         { kind: "file", path: "old.ts", status: "D", insertions: 0, deletions: 5, fileCount: 1, source: "shell" },
-        { kind: "dir", path: "docs", status: "A", insertions: 9, deletions: 0, fileCount: 6 },
+        { kind: "dir", path: "docs", status: "A", insertions: 9, deletions: 0, fileCount: 6, counts: { A: 6, D: 0, M: 0 } },
       ],
       totalFiles: 8,
       totalInsertions: 12,
@@ -587,7 +627,7 @@ describe("buildSummaryText file-level status", () => {
     assert.equal(lines[0], "8 个文件改动  +12  -5");
     assert.ok(lines.some((l) => l.includes("(新文件)")));
     assert.ok(lines.some((l) => l.includes("(已删除)")));
-    assert.ok(lines.some((l) => l.includes("(新增目录 · 6 个文件)")));
+    assert.ok(lines.some((l) => l.includes("(新增 6 个文件)")));
     assert.ok(lines.some((l) => l.includes("[ctrl+q] 打开面板")));
     assert.ok(lines.some((l) => l.includes("/file-diff 查看会话全量改动")));
   });

@@ -710,3 +710,42 @@ describe("ChangeTracker settled-run isolation", () => {
     }
   });
 });
+
+describe("resolveDirStatuses", () => {
+  let tmp: string;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "pi-file-diff-dirs-"));
+    await mkdir(join(tmp, "existing"), { recursive: true });
+    await mkdir(join(tmp, "removed"), { recursive: true });
+    await writeFile(join(tmp, "existing", "keep.txt"), "keep");
+    await writeFile(join(tmp, "removed", "gone.txt"), "gone");
+  });
+
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("classifies existing, deleted, and brand-new directories", async () => {
+    const t = new ChangeTracker(tmp);
+    t.recordBash(join(tmp, "existing", "keep.txt"), "patch");
+    t.recordBash(join(tmp, "removed", "gone.txt"), "patch");
+    await rm(join(tmp, "removed"), { recursive: true, force: true }); // whole dir gone
+    await mkdir(join(tmp, "created"));
+    await writeFile(join(tmp, "created", "new.txt"), "new");
+    t.recordBash(join(tmp, "created", "new.txt"), "patch");
+
+    const map = await t.resolveDirStatuses(
+      new Set([join(tmp, "existing", "keep.txt"), join(tmp, "removed", "gone.txt")]),
+    );
+    assert.equal(map.get(join(tmp, "existing")), "M");
+    assert.equal(map.get(join(tmp, "removed")), "D");
+    assert.equal(map.get(join(tmp, "created")), "A");
+  });
+
+  it("omits dirs when no baseline (runSeen null)", async () => {
+    const t = new ChangeTracker(tmp);
+    t.recordBash(join(tmp, "existing", "keep.txt"), "patch");
+    assert.equal((await t.resolveDirStatuses(null)).size, 0);
+  });
+});

@@ -14,7 +14,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isBashToolResult, isEditToolResult, isWriteToolResult } from "@earendil-works/pi-coding-agent";
 import { ChangeTracker } from "./tracker.ts";
-import { buildPayload, type SummaryPayload } from "./render.ts";
+import { buildPayload, type EntryStatus, type SummaryPayload } from "./render.ts";
 import { createSummaryEntryRenderer } from "./renderer.ts";
 import { FileDiffPanel, type PanelFile } from "./diffviewer.ts";
 import { detectTrackedFiles } from "./git.ts";
@@ -226,6 +226,12 @@ export default function (pi: ExtensionAPI): void {
     // Automatic summaries report only the settled run's own changes; the
     // manual /file-diff command deliberately keeps the full session scope.
     await t.resolveFileStatuses(await ensureRunSeen());
+    // Directory status reflects the directory itself (existing dir + new
+    // files = M), never an aggregate of child statuses.
+    const dirStatuses = new Map<string, EntryStatus>();
+    for (const [abs, status] of await t.resolveDirStatuses(await ensureRunSeen())) {
+      dirStatuses.set(t.displayPath(abs), status);
+    }
     const tracked = await detectTrackedFiles(cwd);
     const scope = onlyIfChangedThisRun ? t.changesInRun(t.currentRunStamp) : t.all;
     const payload: SummaryPayload | null = buildPayload(
@@ -234,6 +240,7 @@ export default function (pi: ExtensionAPI): void {
       tracked,
       excludePaths,
       config.dirThreshold,
+      dirStatuses,
     );
     if (!payload) return;
     try {

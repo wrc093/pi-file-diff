@@ -7,9 +7,11 @@
  * Directory aggregation: changed files are grouped by their path into a tree
  * rooted at the working directory. A subdirectory of the cwd whose subtree
  * holds >= `threshold` changed files collapses into a single directory entry
- * (the cwd itself is never aggregated). A directory's status merges its whole
- * subtree: all added → A, all deleted → D, anything else (mixed, or only
- * content modifications of existing files) → M.
+ * (the cwd itself is never aggregated). A directory's status reflects the
+ * directory itself: new (not present at run start) → A, deleted → D,
+ * otherwise → M, regardless of whether its changed files were added,
+ * deleted, or modified. Without directory baseline info (no runSeen) it
+ * falls back to merging child statuses.
  */
 
 import { isAbsolute } from "node:path";
@@ -42,6 +44,8 @@ export interface EntryNode {
   tracked?: boolean;
   /** dir only — raw children (uncollapsed) */
   children?: EntryNode[];
+  /** dir only — changed-file counts per status, for the composition marker */
+  counts?: Record<EntryStatus, number>;
   /** file only */
   change?: TrackedChange;
 }
@@ -121,6 +125,7 @@ interface RawNode {
   noDiff?: boolean;
   tracked?: boolean;
   children: RawNode[];
+  counts?: Record<EntryStatus, number>;
   change?: TrackedChange;
 }
 
@@ -137,6 +142,7 @@ export function buildChangeTree(
     change: TrackedChange;
     tracked?: boolean;
   }[],
+  dirStatuses?: ReadonlyMap<string, EntryStatus>,
 ): EntryNode[] {
   const root: RawNode = {
     kind: "dir",
@@ -194,27 +200,38 @@ export function buildChangeTree(
     addFile(dir, item);
   }
 
-  finalize(root);
+  finalize(root, dirStatuses);
   return root.children as EntryNode[];
 }
 
-/** Merge child stats into a directory node (post-order). */
-function finalize(node: RawNode): void {
+/** Merge child stats into a directory node (post-order).
+ *
+ * `dirStatuses` (keyed by dir path) carries the baseline-verified directory
+ * status when available; otherwise directory status is derived from the
+ * children (all added → A, all deleted → D, else M).
+ */
+function finalize(node: RawNode, dirStatuses?: ReadonlyMap<string, EntryStatus>): void {
   if (node.kind === "file") return;
-  for (const child of node.children) finalize(child);
+  for (const child of node.children) finalize(child, dirStatuses);
   node.insertions = node.children.reduce((s, c) => s + c.insertions, 0);
   node.deletions = node.children.reduce((s, c) => s + c.deletions, 0);
   node.fileCount = node.children.reduce((s, c) => s + c.fileCount, 0);
 
-  const statuses = new Set(node.children.map((c) => c.status));
-  node.status =
-    statuses.size === 1
-      ? statuses.has("A")
-        ? "A"
-        : statuses.has("D")
-          ? "D"
-          : "M"
-      : "M";
+  const resolved = dirStatuses?.get(node.path);
+  node.counts = dirChildCounts(node);
+  if (resolved !== undefined) {
+    node.status = resolved;
+  } else {
+    const statuses = new Set(node.children.map((c) => c.status));
+    node.status =
+      statuses.size === 1
+        ? statuses.has("A")
+          ? "A"
+          : statuses.has("D")
+            ? "D"
+            : "M"
+        : "M";
+  }
   const sources = node.children
     .map((c) => c.source)
     .filter((s): s is EntrySource => s !== undefined);
@@ -266,6 +283,7 @@ export function buildPayload(
   tracked: Set<string> | null = null,
   excludePaths?: ReadonlySet<string>,
   threshold = 5,
+  dirStatuses?: ReadonlyMap<string, EntryStatus>,
 ): SummaryPayload | null {
   const filtered =
     excludePaths !== undefined
@@ -288,6 +306,7 @@ export function buildPayload(
         tracked: tracked !== null ? tracked.has(display) : undefined,
       };
     }),
+    dirStatuses,
   );
   const entries = collapseEntries(tree, threshold).map(stripEntry);
 
@@ -365,7 +384,12 @@ export function renderFileLine(
   return parts.join("");
 }
 
-/** Render one directory entry line (icon + dir path + aggregate counts + markers). */
+/** Render one directory entry line (icon + dir path + aggregate counts + markers).
+ *
+ * The trailing marker is a composition of the subtree's file statuses:
+ * `(N files added, N files deleted, N files modified)` — zero entries are
+ * omitted.
+ */
 export function renderDirLine(
   d: {
     path: string;
@@ -374,6 +398,8 @@ export function renderDirLine(
     deletions: number;
     fileCount: number;
     source?: EntrySource;
+    children?: readonly EntryNode[];
+    counts?: Record<EntryStatus, number>;
   },
   fg: ColorFn,
   msgs: Messages,
@@ -383,10 +409,17 @@ export function renderDirLine(
   const parts: string[] = [fg(color, icon), " ", fg("dim", pathText)];
   parts.push(...renderCounts(d, fg));
   parts.push(...renderSource(d, fg, msgs));
-  if (d.status === "A") parts.push(fg("dim", msgs.newDirMarker(d.fileCount)));
-  else if (d.status === "D") parts.push(fg("dim", msgs.removedDirMarker(d.fileCount)));
-  else parts.push(fg("dim", msgs.modifiedDirMarker(d.fileCount)));
+  parts.push(fg("dim", msgs.dirComposition(d.counts ?? dirChildCounts(d))));
   return parts.join("");
+}
+
+/** Count the changed files under a subtree by their status. */
+export function dirChildCounts(node: {
+  children?: readonly { status: EntryStatus; fileCount: number }[];
+}): Record<EntryStatus, number> {
+  const counts: Record<EntryStatus, number> = { A: 0, D: 0, M: 0 };
+  for (const child of node.children ?? []) counts[child.status] += child.fileCount;
+  return counts;
 }
 
 /** Render one summary entry line (dir or file). */
