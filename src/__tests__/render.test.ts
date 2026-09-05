@@ -5,6 +5,7 @@ import {
   buildPayload,
   buildSummaryText,
   collapseEntries,
+  effectiveStatus,
   isSummaryPayload,
   MAX_FILES,
   splitContentLines,
@@ -599,6 +600,22 @@ describe("sortEntries no-diff deprioritization", () => {
       assert.ok(idx > prev, `${name} appears after the previous entry`);
       prev = idx;
     }
+  });
+});
+
+describe("effectiveStatus no-diff classification", () => {
+  const base = { path: "/work/proj/x.bin", firstTouchedAt: 1, runStamp: 1 };
+  it("new bash file without a diff is never added — reads as modified", () => {
+    assert.equal(effectiveStatus({ ...base, kind: "bash", insertions: 0, deletions: 0, fileStatus: "A" }), "M");
+  });
+  it("bash file with a computed diff keeps added status", () => {
+    assert.equal(
+      effectiveStatus({ ...base, kind: "bash", insertions: 2, deletions: 0, fileStatus: "A", bashDiff: "@@ -1,1 +1,1 @@\n+x\n" }),
+      "A",
+    );
+  });
+  it("deleted bash file without a diff stays deleted", () => {
+    assert.equal(effectiveStatus({ ...base, kind: "bash", insertions: 0, deletions: 0, fileStatus: "D" }), "D");
   });
 });
 

@@ -98,8 +98,17 @@ export function splitContentLines(content: string, maxLines: number): { lines: s
   return { lines: raw.slice(0, maxLines), remaining: Math.max(0, raw.length - maxLines) };
 }
 
-/** Effective file-level status: resolved, else write ⇒ A, else M. */
+/** Effective file-level status: resolved, else write ⇒ A, else M.
+ *
+ * A shell change whose diff cannot be computed (binary, oversized, or
+ * snapshot missing) is never displayed as added — without a viewable diff,
+ * "new file" would be misleading, so it reads as a modification (M).
+ * Deleted files keep D regardless of diff availability.
+ */
 export function effectiveStatus(change: TrackedChange): EntryStatus {
+  if (change.kind === "bash" && change.bashDiff === undefined && change.fileStatus === "A") {
+    return "M";
+  }
   return change.fileStatus ?? (change.kind === "write" ? "A" : "M");
 }
 
