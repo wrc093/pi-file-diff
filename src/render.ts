@@ -3,28 +3,52 @@
  *
  * No pi imports here on purpose: this module is unit-testable without a pi
  * runtime. The pi entry/panel renderers live in renderer.ts / diffviewer.ts.
+ *
+ * Directory aggregation: changed files are grouped by their path into a tree
+ * rooted at the working directory. A subdirectory of the cwd whose subtree
+ * holds >= `threshold` changed files collapses into a single directory entry
+ * (the cwd itself is never aggregated). A directory's status merges its whole
+ * subtree: all added → A, all deleted → D, anything else (mixed, or only
+ * content modifications of existing files) → M.
  */
 
-import type { ChangeKind, TrackedChange } from "./tracker.ts";
+import { isAbsolute } from "node:path";
+import type { TrackedChange } from "./tracker.ts";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import { enMessages, type Messages } from "./i18n.ts";
 
-export interface SummaryFile {
-  /** Display path (relative to cwd when inside, absolute otherwise) */
-  file: string;
-  /** A = whole file added, D = whole file deleted, M = content modified */
-  status: "A" | "M" | "D";
-  kind: ChangeKind;
+export type EntryStatus = "A" | "M" | "D";
+export type EntrySource = "shell" | "shell-modified";
+
+/**
+ * One node of the change tree. Directory nodes carry their raw children for
+ * step-wise expansion in the interactive panel; file nodes carry the tracked
+ * change for diff rendering. Summary payloads strip both (see SummaryEntry).
+ */
+export interface EntryNode {
+  kind: "dir" | "file";
+  /** Display path (dirs without trailing slash) */
+  path: string;
+  status: EntryStatus;
   insertions: number;
   deletions: number;
-  /** True when a shell command modified the file after the tracked op */
-  shellTouched?: boolean;
-  /** Git tracking status: true tracked, false untracked, undefined unknown */
+  /** Changed files in the subtree (1 for a file entry) */
+  fileCount: number;
+  /** Uniform source marker; undefined when mixed or none */
+  source?: EntrySource;
+  /** git: true = all tracked, false = all untracked, undefined = mixed / no git info */
   tracked?: boolean;
+  /** dir only — raw children (uncollapsed) */
+  children?: EntryNode[];
+  /** file only */
+  change?: TrackedChange;
 }
 
+/** Summary payload entry = tree entry minus diff/child payloads. */
+export type SummaryEntry = Omit<EntryNode, "children" | "change">;
+
 export interface SummaryPayload {
-  files: SummaryFile[];
+  entries: SummaryEntry[];
   totalFiles: number;
   totalInsertions: number;
   totalDeletions: number;
@@ -39,7 +63,7 @@ export const MAX_DIFF_LINES = 500;
 export function isSummaryPayload(value: unknown): value is SummaryPayload {
   if (typeof value !== "object" || value === null) return false;
   const obj = value as Record<string, unknown>;
-  return Array.isArray(obj.files) && typeof obj.totalFiles === "number";
+  return Array.isArray(obj.entries) && typeof obj.totalFiles === "number";
 }
 
 /** Split a unified patch into display lines, dropping ---/+++ headers and
@@ -68,21 +92,176 @@ export function splitContentLines(content: string, maxLines: number): { lines: s
   return { lines: raw.slice(0, maxLines), remaining: Math.max(0, raw.length - maxLines) };
 }
 
+/** Effective file-level status: resolved, else write ⇒ A, else M. */
+export function effectiveStatus(change: TrackedChange): EntryStatus {
+  return change.fileStatus ?? (change.kind === "write" ? "A" : "M");
+}
+
+/** Per-file source marker: shell-only or shell-modified after edit/write. */
+function fileSource(change: TrackedChange): EntrySource | undefined {
+  if (change.shellTouched) return "shell-modified";
+  return change.kind === "bash" ? "shell" : undefined;
+}
+
+/** True for display paths that do not live under the cwd (never aggregated). */
+function isOutsideWorkspace(displayPath: string): boolean {
+  return isAbsolute(displayPath) || displayPath.startsWith("..");
+}
+
+interface RawNode {
+  kind: "dir" | "file";
+  path: string;
+  status: EntryStatus;
+  insertions: number;
+  deletions: number;
+  fileCount: number;
+  source?: EntrySource;
+  tracked?: boolean;
+  children: RawNode[];
+  change?: TrackedChange;
+}
+
+/**
+ * Build the change tree (bottom-up merged) from display-path items.
+ * Root children only — the cwd itself never becomes an entry. Files outside
+ * the cwd (absolute or `../`-escaped display paths) stay root-level file
+ * entries, since only cwd subdirectories may aggregate.
+ */
+export function buildChangeTree(
+  items: readonly {
+    path: string;
+    status: EntryStatus;
+    change: TrackedChange;
+    tracked?: boolean;
+  }[],
+): EntryNode[] {
+  const root: RawNode = {
+    kind: "dir",
+    path: "",
+    status: "M",
+    insertions: 0,
+    deletions: 0,
+    fileCount: 0,
+    children: [],
+  };
+
+  const addFile = (parent: RawNode, item: (typeof items)[number]): void => {
+    parent.children.push({
+      kind: "file",
+      path: item.path,
+      status: item.status,
+      insertions: item.change.insertions,
+      deletions: item.change.deletions,
+      fileCount: 1,
+      source: fileSource(item.change),
+      tracked: item.tracked,
+      children: [],
+      change: item.change,
+    });
+  };
+
+  for (const item of items) {
+    if (isOutsideWorkspace(item.path)) {
+      addFile(root, item);
+      continue;
+    }
+    const segments = item.path.split(/[\\/]/).filter((s) => s.length > 0);
+    let dir = root;
+    for (let i = 0; i < segments.length - 1; i++) {
+      const seg = segments[i]!;
+      const childPath = dir.path === "" ? seg : dir.path + "/" + seg;
+      let child = dir.children.find((c) => c.kind === "dir" && c.path === childPath) as
+        | RawNode
+        | undefined;
+      if (!child) {
+        child = {
+          kind: "dir",
+          path: childPath,
+          status: "M",
+          insertions: 0,
+          deletions: 0,
+          fileCount: 0,
+          children: [],
+        };
+        dir.children.push(child);
+      }
+      dir = child;
+    }
+    addFile(dir, item);
+  }
+
+  finalize(root);
+  return root.children as EntryNode[];
+}
+
+/** Merge child stats into a directory node (post-order). */
+function finalize(node: RawNode): void {
+  if (node.kind === "file") return;
+  for (const child of node.children) finalize(child);
+  node.insertions = node.children.reduce((s, c) => s + c.insertions, 0);
+  node.deletions = node.children.reduce((s, c) => s + c.deletions, 0);
+  node.fileCount = node.children.reduce((s, c) => s + c.fileCount, 0);
+
+  const statuses = new Set(node.children.map((c) => c.status));
+  node.status =
+    statuses.size === 1
+      ? statuses.has("A")
+        ? "A"
+        : statuses.has("D")
+          ? "D"
+          : "M"
+      : "M";
+  const sources = node.children
+    .map((c) => c.source)
+    .filter((s): s is EntrySource => s !== undefined);
+  node.source = new Set(sources).size === 1 ? sources[0] : undefined;
+  const tracked = node.children
+    .map((c) => c.tracked)
+    .filter((t): t is boolean => t !== undefined);
+  node.tracked = new Set(tracked).size === 1 ? tracked[0] : undefined;
+}
+
+/**
+ * Flatten one level of a tree into display entries: a directory whose subtree
+ * holds >= `threshold` changed files stays a single entry; smaller directories
+ * are unwrapped (recursively) into their files.
+ */
+export function collapseEntries(nodes: readonly EntryNode[], threshold: number): EntryNode[] {
+  const out: EntryNode[] = [];
+  for (const node of nodes) {
+    if (node.kind === "file") {
+      out.push(node);
+    } else if (node.fileCount >= threshold) {
+      out.push(node);
+    } else {
+      out.push(...collapseEntries(node.children ?? [], threshold));
+    }
+  }
+  return out;
+}
+
+/** Drop diff bodies / child trees — safe for session entry payloads. */
+function stripEntry(node: EntryNode): SummaryEntry {
+  const { children: _children, change: _change, ...rest } = node;
+  return rest;
+}
+
 /**
  * Build the summary payload from tracked changes.
  *
- * Contains only the file list — diff bodies stay in the in-memory tracker
- * and are shown by the interactive panel, keeping session entries small.
- * Returns null when nothing changed.
+ * Contains only aggregated display entries — diff bodies stay in the
+ * in-memory tracker and are shown by the interactive panel, keeping session
+ * entries small. Returns null when nothing changed.
  *
  * `tracked` is the Set from detectTrackedFiles() (or null when the workspace
- * is not a git repo); it only classifies files for grouped display.
+ * is not a git repo); it only classifies entries for grouped display.
  */
 export function buildPayload(
   changes: readonly TrackedChange[],
   displayPath: (abs: string) => string,
   tracked: Set<string> | null = null,
   excludePaths?: ReadonlySet<string>,
+  threshold = 5,
 ): SummaryPayload | null {
   const filtered =
     excludePaths !== undefined
@@ -95,22 +274,21 @@ export function buildPayload(
       : changes;
   if (filtered.length === 0) return null;
 
-  const files: SummaryFile[] = filtered.slice(0, MAX_FILES).map((c) => {
-    const display = displayPath(c.path);
-    const file: SummaryFile = {
-      file: display,
-      status: c.fileStatus ?? (c.kind === "write" ? "A" : "M"),
-      kind: c.kind,
-      insertions: c.insertions,
-      deletions: c.deletions,
-    };
-    if (c.shellTouched) file.shellTouched = true;
-    if (tracked !== null) file.tracked = tracked.has(display);
-    return file;
-  });
+  const tree = buildChangeTree(
+    filtered.map((c) => {
+      const display = displayPath(c.path);
+      return {
+        path: display,
+        status: effectiveStatus(c),
+        change: c,
+        tracked: tracked !== null ? tracked.has(display) : undefined,
+      };
+    }),
+  );
+  const entries = collapseEntries(tree, threshold).map(stripEntry);
 
   return {
-    files,
+    entries,
     totalFiles: filtered.length,
     totalInsertions: filtered.reduce((sum, c) => sum + c.insertions, 0),
     totalDeletions: filtered.reduce((sum, c) => sum + c.deletions, 0),
@@ -127,33 +305,106 @@ const idColor: ColorFn = (_color, text) => text;
 const STRIKE_ON = "\x1b[9m";
 const STRIKE_OFF = "\x1b[29m";
 
+function iconFor(status: EntryStatus): { icon: string; color: ThemeColorName } {
+  switch (status) {
+    case "A":
+      return { icon: "+", color: "success" };
+    case "D":
+      return { icon: "-", color: "error" };
+    default:
+      return { icon: "~", color: "warning" };
+  }
+}
+
+/** File entries use `~` for content modifications; directory entries use `M`. */
+function dirIconFor(status: EntryStatus): { icon: string; color: ThemeColorName } {
+  switch (status) {
+    case "A":
+      return { icon: "+", color: "success" };
+    case "D":
+      return { icon: "-", color: "error" };
+    default:
+      return { icon: "M", color: "warning" };
+  }
+}
+
+function renderCounts(
+  entry: { insertions: number; deletions: number },
+  fg: ColorFn,
+): string[] {
+  const counts: string[] = [];
+  if (entry.insertions > 0) counts.push(fg("success", `+${entry.insertions}`));
+  if (entry.deletions > 0) counts.push(fg("error", `-${entry.deletions}`));
+  return counts.length > 0 ? ["  ", counts.join(" ")] : [];
+}
+
+function renderSource(entry: { source?: EntrySource }, fg: ColorFn, msgs: Messages): string[] {
+  if (entry.source === "shell") return [fg("dim", msgs.shellMarker)];
+  if (entry.source === "shell-modified") return [fg("dim", msgs.shellTouchedMarker)];
+  return [];
+}
+
 /** Render one file line (icon + path + counts + shell markers). */
-function renderFileLine(
-  f: SummaryFile,
+export function renderFileLine(
+  f: {
+    path: string;
+    status: EntryStatus;
+    insertions: number;
+    deletions: number;
+    source?: EntrySource;
+  },
   fg: ColorFn,
   msgs: Messages,
 ): string {
-  const icon = f.status === "A" ? "+" : f.status === "D" ? "-" : "~";
-  const iconColor: ThemeColorName = f.status === "A" ? "success" : f.status === "D" ? "error" : "warning";
-  const pathText = f.status === "D" ? STRIKE_ON + f.file + STRIKE_OFF : f.file;
-  const parts: string[] = [fg(iconColor, icon), " ", fg("dim", pathText)];
-
-  const counts: string[] = [];
-  if (f.insertions > 0) counts.push(fg("success", `+${f.insertions}`));
-  if (f.deletions > 0) counts.push(fg("error", `-${f.deletions}`));
-  if (counts.length > 0) parts.push("  ", counts.join(" "));
-  if (f.kind === "bash") parts.push(fg("dim", msgs.shellMarker));
-  else if (f.shellTouched) parts.push(fg("dim", msgs.shellTouchedMarker));
+  const { icon, color } = iconFor(f.status);
+  const pathText = f.status === "D" ? STRIKE_ON + f.path + STRIKE_OFF : f.path;
+  const parts: string[] = [fg(color, icon), " ", fg("dim", pathText)];
+  parts.push(...renderCounts(f, fg));
+  parts.push(...renderSource(f, fg, msgs));
   if (f.status === "A") parts.push(fg("dim", msgs.newFileMarker));
   else if (f.status === "D") parts.push(fg("dim", msgs.deletedFileMarker));
-
   return parts.join("");
 }
 
+/** Render one directory entry line (icon + dir path + aggregate counts + markers). */
+export function renderDirLine(
+  d: {
+    path: string;
+    status: EntryStatus;
+    insertions: number;
+    deletions: number;
+    fileCount: number;
+    source?: EntrySource;
+  },
+  fg: ColorFn,
+  msgs: Messages,
+): string {
+  const { icon, color } = dirIconFor(d.status);
+  const pathText = d.status === "D" ? STRIKE_ON + d.path + "/" + STRIKE_OFF : d.path + "/";
+  const parts: string[] = [fg(color, icon), " ", fg("dim", pathText)];
+  parts.push(...renderCounts(d, fg));
+  parts.push(...renderSource(d, fg, msgs));
+  if (d.status === "A") parts.push(fg("dim", msgs.newDirMarker(d.fileCount)));
+  else if (d.status === "D") parts.push(fg("dim", msgs.removedDirMarker(d.fileCount)));
+  else parts.push(fg("dim", msgs.modifiedDirMarker(d.fileCount)));
+  return parts.join("");
+}
+
+/** Render one summary entry line (dir or file). */
+export function renderEntryLine(
+  entry: SummaryEntry | EntryNode,
+  fg: ColorFn,
+  msgs: Messages,
+): string {
+  return entry.kind === "dir"
+    ? renderDirLine(entry, fg, msgs)
+    : renderFileLine(entry, fg, msgs);
+}
+
 /**
- * Render the summary as colored text lines — file list only, no diff bodies.
- * When git tracking info is present, files are grouped into tracked and
- * untracked sections. `fg` is injectable for tests; pi passes theme.fg.
+ * Render the summary as colored text lines — aggregated entries only, no diff
+ * bodies. When git tracking info is present, entries are grouped into tracked
+ * and untracked sections. `fg` is injectable for tests; pi passes theme.fg.
  */
 export function buildSummaryText(
   payload: SummaryPayload,
@@ -167,29 +418,34 @@ export function buildSummaryText(
   if (payload.totalDeletions > 0) header.push(fg("error", `-${payload.totalDeletions}`));
   lines.push(header.join("  "));
 
-  const hasGitInfo = payload.files.some((f) => f.tracked !== undefined);
+  const shown = payload.entries.slice(0, MAX_FILES);
+  const hasGitInfo = shown.some((e) => e.tracked !== undefined);
 
   if (!hasGitInfo) {
-    for (const f of payload.files) lines.push(renderFileLine(f, fg, msgs));
+    for (const e of shown) lines.push(renderEntryLine(e, fg, msgs));
   } else {
-    const tracked = payload.files.filter((f) => f.tracked === true);
-    const untracked = payload.files.filter((f) => f.tracked !== true);
+    const tracked = shown.filter((e) => e.tracked === true);
+    const untracked = shown.filter((e) => e.tracked !== true);
 
     if (tracked.length > 0) {
       lines.push(fg("muted", "git tracked files:"));
-      for (const f of tracked) lines.push(renderFileLine(f, fg, msgs));
+      for (const e of tracked) lines.push(renderEntryLine(e, fg, msgs));
     }
     if (untracked.length > 0) {
       if (tracked.length > 0) lines.push("");
       lines.push(fg("muted", "git untracked files:"));
-      for (const f of untracked) lines.push(renderFileLine(f, fg, msgs));
+      for (const e of untracked) lines.push(renderEntryLine(e, fg, msgs));
     }
   }
 
-  lines.push(fg("dim", msgs.summaryHint));
+  lines.push(fg("accent", msgs.summaryHintKey) + fg("dim", msgs.summaryHintRest));
 
+  const shownFiles = shown.reduce((sum, e) => sum + e.fileCount, 0);
+  const remaining = payload.totalFiles - shownFiles;
+  if (remaining > 0) {
+    lines.push(fg("dim", `... and ${remaining} more`));
+  }
   if (payload.totalFiles > MAX_FILES) {
-    lines.push(fg("dim", `... and ${payload.totalFiles - MAX_FILES} more`));
     lines.push(fg("warning", msgs.excludeHint));
   }
 

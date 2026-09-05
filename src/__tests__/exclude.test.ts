@@ -119,20 +119,21 @@ describe("ChangeTracker exclusions", () => {
     t.recordWrite("b.txt", "y\n");
     const exclude = new Set([P("a.txt")]);
     const payload = buildPayload(t.all, (abs) => abs.replace(dir + "/", ""), null, exclude)!;
-    assert.deepEqual(payload.files.map((f) => f.file), ["b.txt"]);
+    assert.deepEqual(payload.entries.map((e) => e.path), ["b.txt"]);
     assert.equal(payload.totalFiles, 1);
     assert.equal(payload.totalInsertions, 1);
   });
 
   it("renders the exclude hint when the summary overflows", () => {
     const many = Array.from({ length: 15 }, (_, i) => ({
-      file: `f${i}.ts`,
+      kind: "file" as const,
+      path: `f${i}.ts`,
       status: "M" as const,
-      kind: "edit" as const,
       insertions: 1,
       deletions: 0,
+      fileCount: 1,
     }));
-    const payload = { files: many, totalFiles: 15, totalInsertions: 15, totalDeletions: 0 };
+    const payload = { entries: many, totalFiles: 15, totalInsertions: 15, totalDeletions: 0 };
     const lines = buildSummaryText(payload);
     assert.ok(lines.some((l) => l.includes("file-diff-exclude")), "hint mentions the exclude command");
   });

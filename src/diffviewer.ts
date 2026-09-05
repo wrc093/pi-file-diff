@@ -1,11 +1,14 @@
 /**
  * pi-file-diff — Interactive file/diff panel.
  *
- * Shown via ctrl+q as a fullscreen overlay. Two views:
- *  - list:   one line per changed file, selection highlighted; navigate with
- *            arrow keys / j k / page keys / mouse wheel
- *  - diff:   the selected file's full diff (+ green, - red, context dim);
- *            arrow keys scroll, Esc / left-arrow returns to the list
+ * Shown via ctrl+q as a fullscreen overlay. Three views:
+ *  - list (top):  aggregated entries — subdirectories of the cwd whose
+ *                 subtree holds >= `threshold` changed files appear as a
+ *                 single directory entry, everything else per file
+ *  - list (dir):  after Enter/ctrl+q on a directory entry; breadcrumb in the
+ *                 header, Esc/← returns to the parent level, files open diffs
+ *  - diff:        the selected file's full diff (+ green, - red, context dim);
+ *                 arrow keys scroll, Esc / left-arrow returns to the list
  *
  * Mouse wheel events are read directly from process.stdin (the TUI reads the
  * same stream; its alt-screen consumer handles scrolling of the transcript
@@ -17,8 +20,16 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { KeybindingsManager } from "@earendil-works/pi-tui";
 import { enMessages, type Messages } from "./i18n.ts";
 import { withGreenSuccess } from "./colors.ts";
-import { MAX_DIFF_LINES, splitContentLines, type ColorFn } from "./render.ts";
-import type { ChangeKind, TrackedChange } from "./tracker.ts";
+import {
+  buildChangeTree,
+  collapseEntries,
+  effectiveStatus,
+  renderEntryLine,
+  type ColorFn,
+  type EntryNode,
+} from "./render.ts";
+import { MAX_DIFF_LINES, splitContentLines } from "./render.ts";
+import { DEFAULT_DIR_THRESHOLD, type ChangeKind, type TrackedChange } from "./tracker.ts";
 
 export interface PanelFile {
   /** Display path */
@@ -26,26 +37,6 @@ export interface PanelFile {
   change: TrackedChange;
   /** Git tracking status (undefined when workspace has no git) */
   tracked?: boolean;
-}
-
-/**
- * Keep Git sections contiguous before pagination. The tracker preserves tool
- * execution order, which can interleave tracked and untracked paths (for
- * example, write a new file, edit an existing file, then write another).
- * Rendering that order directly makes the same section heading repeat within
- * a page. Preserve the original order within each section while placing all
- * tracked files before untracked files, matching the summary view.
- */
-function groupFilesByGitStatus(files: readonly PanelFile[]): PanelFile[] {
-  const tracked: PanelFile[] = [];
-  const untracked: PanelFile[] = [];
-
-  for (const file of files) {
-    if (file.tracked === true) tracked.push(file);
-    else untracked.push(file);
-  }
-
-  return tracked.length > 0 && untracked.length > 0 ? [...tracked, ...untracked] : [...files];
 }
 
 type View = "list" | "diff";
@@ -215,19 +206,41 @@ export interface MouseInputSource {
   removeListener(event: "data", listener: (chunk: Buffer) => void): unknown;
 }
 
-/** One change list item, pre-rendered per viewport width. */
+/**
+ * Keep Git sections contiguous within one level before pagination. The
+ * tracker preserves tool execution order, which can interleave tracked and
+ * untracked paths; rendering that order directly makes the same section
+ * heading repeat. Preserve the original order within each section.
+ */
+function groupEntries(entries: readonly EntryNode[]): EntryNode[] {
+  const tracked: EntryNode[] = [];
+  const untracked: EntryNode[] = [];
 
+  for (const entry of entries) {
+    if (entry.tracked === true) tracked.push(entry);
+    else untracked.push(entry);
+  }
+
+  return tracked.length > 0 && untracked.length > 0 ? [...tracked, ...untracked] : [...entries];
+}
+
+/** One change list item, pre-rendered per viewport width. */
 export class FileDiffPanel {
-  private readonly files: PanelFile[];
+  private readonly root: EntryNode[];
+  private readonly threshold: number;
   private readonly theme: Theme;
   private readonly keys: KeybindingsManager;
   private readonly onChange: () => void;
   private readonly onDone: () => void;
   private readonly msgs: Messages;
   private readonly fg: ColorFn;
+  /** Stack of entered directories (raw nodes for the current level). */
+  private trail: EntryNode[] = [];
   private selected = 0;
   private view: View = "list";
   private diffScroll = 0;
+  /** File entry currently shown in the diff view. */
+  private openFile: EntryNode | undefined;
   /** Files per page in the list view. */
   static readonly PAGE_SIZE = 10;
   private readonly wheel = new MouseWheelParser();
@@ -249,8 +262,17 @@ export class FileDiffPanel {
     mouseSource?: MouseInputSource,
     msgs: Messages = enMessages,
     viewportHeight: () => number = () => 0,
+    threshold: number = DEFAULT_DIR_THRESHOLD,
   ) {
-    this.files = groupFilesByGitStatus(files);
+    this.root = buildChangeTree(
+      files.map((f) => ({
+        path: f.path,
+        status: effectiveStatus(f.change),
+        change: f.change,
+        tracked: f.tracked,
+      })),
+    );
+    this.threshold = threshold;
     this.theme = theme;
     this.keys = keys;
     this.onChange = onChange;
@@ -274,8 +296,11 @@ export class FileDiffPanel {
       else if (k.matches(data, "tui.select.down") || data === "j") this.moveSelection(1);
       else if (k.matches(data, "tui.select.pageUp")) this.pageMove(-1);
       else if (k.matches(data, "tui.select.pageDown")) this.pageMove(1);
-      else if (k.matches(data, "tui.select.confirm")) this.openDiff();
-      else if (k.matches(data, "tui.select.cancel") || data === "\x1b") this.onDone();
+      else if (k.matches(data, "tui.select.confirm") || data === "\x11" || data === "l" || data === "\x1b[C") {
+        this.enterSelected();
+      } else if (k.matches(data, "tui.select.cancel") || data === "\x1b[D" || data === "h") {
+        this.backOrClose();
+      }
       return;
     }
 
@@ -288,9 +313,17 @@ export class FileDiffPanel {
       this.view = "list";
       this.diffScroll = 0;
       this.onChange();
-    } else if (k.matches(data, "tui.select.confirm")) {
+    } else if (k.matches(data, "tui.select.confirm") || data === "\x11") {
       this.onDone();
     }
+  }
+
+  /** Current level's display entries (grouped for git sections). */
+  private levelEntries(): EntryNode[] {
+    const base =
+      this.trail.length > 0 ? (this.trail[this.trail.length - 1]!.children ?? []) : this.root;
+    const entries = collapseEntries(base, this.threshold);
+    return entries.some((e) => e.tracked !== undefined) ? groupEntries(entries) : entries;
   }
 
   private get page(): number {
@@ -298,13 +331,13 @@ export class FileDiffPanel {
   }
 
   private get pageCount(): number {
-    return Math.max(1, Math.ceil(this.files.length / FileDiffPanel.PAGE_SIZE));
+    return Math.max(1, Math.ceil(this.levelEntries().length / FileDiffPanel.PAGE_SIZE));
   }
 
   /** Page-based navigation: jump to the first item of the target page. */
   private pageMove(delta: number): void {
     const target = Math.min(this.pageCount - 1, Math.max(0, this.page + delta));
-    const next = Math.min(this.files.length - 1, target * FileDiffPanel.PAGE_SIZE);
+    const next = Math.min(this.levelEntries().length - 1, target * FileDiffPanel.PAGE_SIZE);
     if (next !== this.selected) {
       this.selected = next;
       this.onChange();
@@ -312,17 +345,39 @@ export class FileDiffPanel {
   }
 
   private moveSelection(delta: number): void {
-    const next = Math.min(this.files.length - 1, Math.max(0, this.selected + delta));
+    const next = Math.min(this.levelEntries().length - 1, Math.max(0, this.selected + delta));
     if (next !== this.selected) {
       this.selected = next;
       this.onChange();
     }
   }
 
-  private openDiff(): void {
-    this.view = "diff";
-    this.diffScroll = 0;
+  /** Enter/ctrl+q on the selection: descend into a dir, or open the file diff. */
+  private enterSelected(): void {
+    const entry = this.levelEntries()[this.selected];
+    if (!entry) return;
+    if (entry.kind === "dir") {
+      this.trail.push(entry);
+      this.selected = 0;
+      this.diffScroll = 0;
+    } else {
+      this.openFile = entry;
+      this.view = "diff";
+      this.diffScroll = 0;
+    }
     this.onChange();
+  }
+
+  /** Esc/←: up one level; at the top level the panel closes. */
+  private backOrClose(): void {
+    if (this.trail.length > 0) {
+      this.trail.pop();
+      this.selected = 0;
+      this.diffScroll = 0;
+      this.onChange();
+    } else {
+      this.onDone();
+    }
   }
 
   private scrollDiff(delta: number): void {
@@ -365,9 +420,8 @@ export class FileDiffPanel {
   }
 
   private diffLineCount(): number {
-    const file = this.files[this.selected];
-    if (!file) return 0;
-    return buildDiffViewLines(file.change, this.fg, this.msgs).length;
+    if (this.view !== "diff" || !this.openFile?.change) return 0;
+    return buildDiffViewLines(this.openFile.change, this.fg, this.msgs).length;
   }
 
   render(width: number): string[] {
@@ -387,80 +441,61 @@ export class FileDiffPanel {
     fg: (color: Parameters<NonNullable<Theme["fg"]>>[0], text: string) => string,
   ): string[] {
     const out: string[] = [];
-    const total = this.files.length;
+    const entries = this.levelEntries();
+    const total = entries.length;
     const page = this.page;
     const pageCount = this.pageCount;
-    out.push(
-      fg("accent", `pi-file-diff · ${this.msgs.filesChanged(total)} · Page ${page + 1}/${pageCount}`),
-    );
+    const levelFiles = entries.reduce((sum, e) => sum + e.fileCount, 0);
+    let title = `pi-file-diff · ${this.msgs.filesChanged(levelFiles)} · Page ${page + 1}/${pageCount}`;
+    if (this.trail.length > 0) {
+      title += ` · 📁 ${this.trail.map((t) => t.path).join("/")}/`;
+    }
+    out.push(fg("accent", title));
 
     const pageStart = page * FileDiffPanel.PAGE_SIZE;
     const pageEnd = Math.min(total, pageStart + FileDiffPanel.PAGE_SIZE);
-    const hasGitInfo = this.files.some((f) => f.tracked !== undefined);
+    const hasGitInfo = entries.some((e) => e.tracked !== undefined);
     let lastGroup: boolean | undefined;
 
     for (let i = pageStart; i < pageEnd; i++) {
-      const file = this.files[i]!;
+      const entry = entries[i]!;
       if (hasGitInfo) {
-        const group = file.tracked === true;
+        const group = entry.tracked === true;
         if (group !== lastGroup) {
           out.push(fg("muted", group ? "git tracked files:" : "git untracked files:"));
           lastGroup = group;
         }
       }
-      out.push(this.renderListLine(i, file, fg));
+      const line = renderEntryLine(entry, fg, this.msgs);
+      out.push(i === this.selected ? REVERSE_ON + line + REVERSE_OFF : line);
     }
 
-    out.push(fg("dim", this.msgs.listFooter));
+    out.push(fg("dim", this.trail.length > 0 ? this.msgs.listFooterDir : this.msgs.listFooterRoot));
     return out;
-  }
-
-  private renderListLine(
-    index: number,
-    file: PanelFile,
-    fg: (color: Parameters<NonNullable<Theme["fg"]>>[0], text: string) => string,
-  ): string {
-    const c = file.change;
-    const status = c.fileStatus ?? (c.kind === "write" ? "A" : "M");
-    const icon = status === "A" ? "+" : status === "D" ? "-" : "~";
-    const iconColor = status === "A" ? "success" : status === "D" ? "error" : "warning";
-    const pathText = status === "D" ? "\x1b[9m" + file.path + "\x1b[29m" : file.path;
-    let line = fg(iconColor, icon) + " " + fg("dim", pathText);
-    const counts: string[] = [];
-    if (c.insertions > 0) counts.push(fg("success", `+${c.insertions}`));
-    if (c.deletions > 0) counts.push(fg("error", `-${c.deletions}`));
-    if (counts.length > 0) line += "  " + counts.join(" ");
-    if (c.kind === "bash") line += fg("dim", this.msgs.shellMarker);
-    else if (c.shellTouched) line += fg("dim", this.msgs.shellTouchedMarker);
-    if (status === "A") line += fg("dim", this.msgs.newFileMarker);
-    else if (status === "D") line += fg("dim", this.msgs.deletedFileMarker);
-
-    return index === this.selected ? REVERSE_ON + line + REVERSE_OFF : line;
   }
 
   private renderDiff(
     width: number,
     fg: (color: Parameters<NonNullable<Theme["fg"]>>[0], text: string) => string,
   ): string[] {
-    const file = this.files[this.selected];
+    const entry = this.openFile;
     const out: string[] = [];
-    if (!file) return out;
+    if (!entry) return out;
+    const c = entry.change;
+    if (!c) {
+      out.push(fg("dim", this.msgs.noDiff));
+      return out;
+    }
 
     const fit = (line: string) => (width > 0 && line.length > width ? line.slice(0, width) : line);
 
-    const c = file.change;
-    const status = c.fileStatus ?? (c.kind === "write" ? "A" : "M");
+    const status = entry.status;
     const icon = status === "A" ? "+" : status === "D" ? "-" : "~";
     const counts: string[] = [];
-    if (c.insertions > 0) counts.push(`+${c.insertions}`);
-    if (c.deletions > 0) counts.push(`-${c.deletions}`);
-    const title =
-      status === "D"
-        ? `${icon} \x1b[9m${file.path}\x1b[29m`
-        : `${icon} ${file.path}`;
-    out.push(
-      fg("accent", title) + (counts.length > 0 ? fg("muted", "  " + counts.join(" ")) : ""),
-    );
+    if (entry.insertions > 0) counts.push(`+${entry.insertions}`);
+    if (entry.deletions > 0) counts.push(`-${entry.deletions}`);
+    const title = status === "D" ? `${icon} \x1b[9m${entry.path}\x1b[29m` : `${icon} ${entry.path}`;
+    out.push(fg("accent", title) + (counts.length > 0 ? fg("muted", "  " + counts.join(" ")) : ""));
     if (status === "A") out.push(fg("dim", this.msgs.newFileFull));
     else if (status === "D") out.push(fg("dim", this.msgs.deletedFileFull));
 

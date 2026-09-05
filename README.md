@@ -41,6 +41,8 @@ Pi agents can edit files through `write` and `edit`, or indirectly through shell
 
 The extension is intentionally display-only: summaries are appended as TUI entries and are not injected back into the model context. `/file-diff` is only for revisiting the current conversation’s accumulated changes on demand; it is never required for the automatic receipt to appear.
 
+Each automatic receipt covers only the files actually changed by **the current task** (one `agent_start` → `agent_settled` window); files from earlier tasks never bleed into it. The conversation-wide accumulation stays available via `/file-diff` or the `ctrl+q` panel at any time.
+
 ## Why it exists
 
 The answer to “what did the agent actually change?” is often scattered across tool calls, shell output, and Git status. That is inconvenient when:
@@ -123,7 +125,7 @@ The npm package is the supported installation path for normal use.
 
 ## Commands
 
-The extension has three active commands. They are deliberately separate: one answers *what changed*, one controls *how shell changes are detected*, and one controls *which paths should be ignored*.
+The extension has four active commands. They are deliberately separate: one answers *what changed*, one controls *how shell changes are detected*, one controls *which paths should be ignored*, and one tunes *when directories collapse into a single entry*.
 
 ### `/file-diff` — inspect the conversation-wide change set
 
@@ -179,6 +181,18 @@ Paths may be relative to the current workspace, absolute, or start with `~`. Add
 
 The list is persisted in `~/.pi/agent/file-diff.json`. Add exclusions early in a conversation when possible, then use `/file-diff` to confirm that the remaining receipt contains only review-worthy files.
 
+### `/file-diff-threshold` — directory aggregation threshold
+
+```text
+/file-diff-threshold [<count>|status]
+```
+
+When a directory accumulates a large number of changed files, the receipt and the `ctrl+q` panel collapse them into one directory entry (a whole new directory becomes a single `+ …/ (new dir · N files)` line). A directory's status merges its subtree: all added → added dir; all deleted → deleted dir; anything else (mixed, or content-only modifications of existing files) → modified dir.
+
+Only subdirectories of the current workspace aggregate — the workspace root itself never collapses, and directories below the threshold stay per-file. Inside the panel, select a directory entry and press Enter/ctrl+q to descend; Esc/← returns to the parent level.
+
+The threshold defaults to `5` (minimum `2`) and applies immediately; it can also be set via config file or env var (see [Configuration](#configuration)).
+
 ## Configuration
 
 Create or edit `~/.pi/agent/file-diff.json`, then run `/reload` or restart Pi:
@@ -188,6 +202,7 @@ Create or edit `~/.pi/agent/file-diff.json`, then run `/reload` or restart Pi:
   "lang": "en",
   "bashTracking": "auto",
   "bashThreshold": 200000,
+  "dirThreshold": 5,
   "ignore": ["my_vendor"],
   "exclude": [".pi-dock/sessions"]
 }
@@ -198,10 +213,11 @@ Create or edit `~/.pi/agent/file-diff.json`, then run `/reload` or restart Pi:
 | `lang` | `en`, `zh` | `en` | UI language. |
 | `bashTracking` | `auto`, `on`, `off` | `auto` | Whether to scan for shell-made changes. `auto` disables the scan when the workspace exceeds the threshold. |
 | `bashThreshold` | positive integer | `200000` | Workspace-file threshold used by `auto` mode. |
+| `dirThreshold` | integer ≥ 2 | `5` | Directory aggregation threshold: a cwd subdirectory with this many changed files collapses into one entry. |
 | `ignore` | string array | `[]` | Additional directory-name ignore rules, case-insensitive. |
 | `exclude` | string array | `[]` | File or directory paths to omit from tracking and summaries. |
 
-`PI_FILE_DIFF_LANG` and `PI_FILE_DIFF_BASH_TRACKING` environment variables override the configuration file.
+`PI_FILE_DIFF_LANG`, `PI_FILE_DIFF_BASH_TRACKING` and `PI_FILE_DIFF_DIR_THRESHOLD` environment variables override the configuration file.
 
 ## How tracking works
 

@@ -96,6 +96,7 @@ describe("resolveConfig", () => {
       lang: "en",
       bashTracking: "auto",
       bashThreshold: 200_000,
+      dirThreshold: 5,
       ignore: [],
       exclude: [],
     });
@@ -112,6 +113,7 @@ describe("resolveConfig", () => {
           lang: "zh",
           bashTracking: "off",
           bashThreshold: 50000,
+          dirThreshold: 8,
           ignore: ["my_vendor"],
           exclude: ["vendor/deps", "/abs/path/file.txt"],
         }),
@@ -120,6 +122,7 @@ describe("resolveConfig", () => {
         lang: "zh",
         bashTracking: "off",
         bashThreshold: 50000,
+        dirThreshold: 8,
         ignore: ["my_vendor"],
         exclude: ["vendor/deps", "/abs/path/file.txt"],
       });
@@ -137,6 +140,23 @@ describe("resolveConfig", () => {
       assert.equal(cfg.bashTracking, "on");
       assert.equal(cfg.lang, "zh");
       assert.equal(cfg.bashThreshold, 200_000); // file has no threshold → default
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads dirThreshold from the config file and clamps invalid values", async () => {
+    delete process.env.PI_FILE_DIFF_LANG;
+    delete process.env.PI_FILE_DIFF_BASH_TRACKING;
+    delete process.env.PI_FILE_DIFF_DIR_THRESHOLD;
+    const dir = await mkdtemp(join(tmpdir(), "pi-file-diff-cfg-"));
+    try {
+      await writeFile(join(dir, "file-diff.json"), JSON.stringify({ dirThreshold: 12 }));
+      assert.equal(resolveConfig(dir).dirThreshold, 12);
+      await writeFile(join(dir, "file-diff.json"), JSON.stringify({ dirThreshold: 1 }));
+      assert.equal(resolveConfig(dir).dirThreshold, 5, "values below 2 fall back to the default");
+      process.env.PI_FILE_DIFF_DIR_THRESHOLD = "7";
+      assert.equal(resolveConfig(dir).dirThreshold, 7, "env var wins");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

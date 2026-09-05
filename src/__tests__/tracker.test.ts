@@ -638,3 +638,63 @@ describe("ChangeTracker content-unchanged mtime touch (bug repro)", () => {
     assert.equal(c.insertions, 0);
   });
 });
+
+describe("ChangeTracker settled-run isolation", () => {
+  it("stamps new mutations with the current run", () => {
+    const t = makeTracker();
+    assert.equal(t.currentRunStamp, 0, "no run started yet");
+    t.beginRun();
+    assert.equal(t.currentRunStamp, 1);
+    t.recordEdit("a.ts", editPatch(["@@ -1,1 +1,1 @@", "-a", "+b"]));
+    t.recordWrite("n.ts", "x\n");
+    assert.deepEqual(t.changesInRun(1).map((c) => c.path).sort(), ["/work/proj/a.ts", "/work/proj/n.ts"]);
+    assert.equal(t.changesInRun(0).length, 0);
+  });
+
+  it("isolates runs: run 2 sees only its own mutations", () => {
+    const t = makeTracker();
+    t.beginRun();
+    t.recordEdit("old.ts", editPatch(["@@ -1,1 +1,1 @@", "-a", "+b"]));
+    t.beginRun();
+    t.recordEdit("new.ts", editPatch(["@@ -1,1 +1,1 @@", "-a", "+b"]));
+    const run2 = t.changesInRun(2);
+    assert.deepEqual(run2.map((c) => c.path), ["/work/proj/new.ts"]);
+    assert.equal(t.changesInRun(1).length, 1);
+    assert.equal(t.all.length, 2, "the full session list keeps both runs");
+  });
+
+  it("re-touching an old file in a later run moves it to that run", () => {
+    const t = makeTracker();
+    t.beginRun();
+    t.recordEdit("shared.ts", editPatch(["@@ -1,1 +1,1 @@", "-a", "+b"]));
+    t.beginRun();
+    // same file edited again — belongs to run 2 now
+    t.recordEdit("shared.ts", editPatch(["@@ -1,1 +1,1 @@", "-b", "+c"]));
+    const run2 = t.changesInRun(2);
+    assert.deepEqual(run2.map((c) => c.path), ["/work/proj/shared.ts"]);
+    assert.equal(run2[0]!.insertions, 2, "accumulated stats stay on the change");
+    assert.equal(t.changesInRun(1).length, 0);
+  });
+
+  it("bash re-scan of an unchanged file keeps its old run stamp", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-file-diff-runstamp-"));
+    try {
+      const t = new ChangeTracker(dir);
+      t.beginRun();
+      await writeFile(join(dir, "gen.txt"), "v1\n");
+      const start = Date.now() - 5_000;
+      await t.collectBashChanges(start, new Map());
+      assert.equal(t.changesInRun(1).length, 1, "recorded in run 1");
+
+      // run 2: mtime stays inside the guard window but the content is identical
+      t.beginRun();
+      await t.refreshKnownContents();
+      await utimes(join(dir, "gen.txt"), new Date(), new Date());
+      await t.collectBashChanges(Date.now() - 1_000, new Map(), new Map());
+      assert.equal(t.changesInRun(2).length, 0, "no real change → not run 2");
+      assert.equal(t.changesInRun(1).length, 1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

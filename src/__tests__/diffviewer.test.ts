@@ -387,6 +387,112 @@ describe("FileDiffPanel", () => {
   });
 });
 
+describe("FileDiffPanel directory aggregation", () => {
+  function dirFiles(n: number, status: "A" | "M" | "D" = "A"): PanelFile[] {
+    return Array.from({ length: n }, (_, i) => ({
+      path: `src/lib${i}.ts`,
+      change: change({
+        path: `/work/proj/src/lib${i}.ts`,
+        kind: status === "A" ? "write" : "edit",
+        fileStatus: status,
+        insertions: 1,
+        deletions: 0,
+        firstTouchedAt: i + 1,
+        ...(status === "A" ? { content: "x\n" } : { patch: "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-a\n+b\n" }),
+      }),
+    }));
+  }
+
+  it("collapses a dir with >= threshold files into one entry line", () => {
+    const { panel } = makePanel([...dirFiles(6), {
+      path: "top.txt",
+      change: change({ path: "/work/proj/top.txt", kind: "write", insertions: 1, deletions: 0, content: "x\n" }),
+    }]);
+    const out = panel.render(80);
+    assert.ok(out.some((l) => l.includes("7 files changed")), "header counts all files");
+    assert.ok(out.some((l) => l.includes("src/") && l.includes("(new dir · 6 files)")));
+    assert.ok(out.some((l) => l.includes("top.txt")), "root file stays per-file");
+    assert.ok(!out.some((l) => l.includes("lib0.ts")), "children hidden behind the dir entry");
+  });
+
+  it("below the threshold the dir unwraps to per-file lines", () => {
+    const { panel } = makePanel(dirFiles(4));
+    const out = panel.render(80);
+    assert.ok(out.some((l) => l.includes("lib0.ts")));
+    assert.ok(!out.some((l) => l.includes("(new dir")));
+  });
+
+  it("enter descends into a dir; esc returns; dirs reset selection", () => {
+    const { panel, events } = makePanel([...dirFiles(6), {
+      path: "top.txt",
+      change: change({ path: "/work/proj/top.txt", kind: "write", insertions: 1, deletions: 0, content: "x\n" }),
+    }]);
+    // select the dir entry (index 0), enter it
+    panel.handleInput(ENTER);
+    const inside = panel.render(80);
+    assert.ok(inside.some((l) => l.includes("📁 src/")), "breadcrumb shows the current dir");
+    assert.ok(inside.some((l) => l.includes("lib0.ts")), "children visible inside");
+    assert.ok(inside.some((l) => l.includes("up one level")), "footer guides upward navigation");
+    assert.ok(inside.some((l) => l.includes("6 files changed")), "inside header counts the subtree");
+
+    panel.handleInput(ESC);
+    const back = panel.render(80);
+    assert.ok(back.some((l) => l.includes("src/") && l.includes("(new dir")), "back to the collapsed entry");
+    assert.ok(back.some((l) => l.includes("Esc: close")), "root footer restored");
+
+    panel.handleInput(ESC);
+    assert.ok(events.includes("done"), "esc at the top level closes the panel");
+  });
+
+  it("inside a dir, a nested dir above the threshold stays collapsible", () => {
+    const nested: PanelFile[] = Array.from({ length: 5 }, (_, i) => ({
+      path: `a/b/f${i}.ts`,
+      change: change({ path: `/work/proj/a/b/f${i}.ts`, kind: "write", insertions: 1, deletions: 0, content: "x\n" }),
+    }));
+    const { panel } = makePanel(nested);
+    panel.handleInput(ENTER); // enter a/ (5 files ≥ 5)
+    const inside = panel.render(80);
+    assert.ok(inside.some((l) => l.includes("📁 a/")));
+    assert.ok(
+      inside.some((l) => l.includes("a/b/") && l.includes("(new dir · 5 files)")),
+      "nested dir still collapsed",
+    );
+    assert.ok(!inside.some((l) => l.includes("f0.ts")), "children hidden behind the nested dir");
+  });
+
+  it("dir entry with mixed status renders as M", () => {
+    const mixed: PanelFile[] = [
+      ...dirFiles(3),
+      ...dirFiles(2, "M"),
+    ];
+    const { panel } = makePanel(mixed);
+    const out = panel.render(80);
+    const line = out.find((l) => l.includes("src/") && l.includes("(5 files)"))!;
+    assert.ok(line.startsWith("\x1b[7m"), "selected render keeps the reverse highlight");
+    assert.ok(line.includes("<warning>M</>"), "mixed dir renders the M icon");
+  });
+
+  it("honors a custom threshold", () => {
+    const files = dirFiles(3);
+    makePanel(files); // default threshold 5 keeps files flat
+    // rebuild with threshold=3 via direct constructor
+    const panel3 = new FileDiffPanel(
+      files,
+      fakeTheme,
+      makeKeys(),
+      () => {},
+      () => {},
+      new EventEmitter(),
+      undefined,
+      () => 0,
+      3,
+    );
+    const out = panel3.render(80);
+    assert.ok(out.some((l) => l.includes("src/") && l.includes("(new dir · 3 files)")));
+    assert.ok(!out.some((l) => l.includes("lib0.ts")));
+  });
+});
+
 describe("FileDiffPanel pagination", () => {
   function manyFiles(n: number): PanelFile[] {
     return Array.from({ length: n }, (_, i) => ({

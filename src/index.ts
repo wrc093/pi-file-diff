@@ -160,6 +160,9 @@ export default function (pi: ExtensionAPI): void {
     runStartTime = Date.now();
     bashRan = false;
     runStartMutations = tracker?.mutations ?? 0;
+    // Files mutated from now on belong to this user-visible task; automatic
+    // receipts stay isolated from earlier tasks' changes.
+    tracker?.beginRun();
     // Fresh per-settled-run baseline (also yields the workspace file count).
     runSeen = null;
     runSeenPromise = null;
@@ -220,9 +223,18 @@ export default function (pi: ExtensionAPI): void {
     // The manual /file-diff command deliberately bypasses this gate so it can
     // re-open the full conversation change list after a run has settled.
     if (onlyIfChangedThisRun && t.mutations <= runStartMutations) return;
+    // Automatic summaries report only the settled run's own changes; the
+    // manual /file-diff command deliberately keeps the full session scope.
     await t.resolveFileStatuses(await ensureRunSeen());
     const tracked = await detectTrackedFiles(cwd);
-    const payload: SummaryPayload | null = buildPayload(t.all, (abs) => t.displayPath(abs), tracked, excludePaths);
+    const scope = onlyIfChangedThisRun ? t.changesInRun(t.currentRunStamp) : t.all;
+    const payload: SummaryPayload | null = buildPayload(
+      scope,
+      (abs) => t.displayPath(abs),
+      tracked,
+      excludePaths,
+      config.dirThreshold,
+    );
     if (!payload) return;
     try {
       // Entries are display-only and stay out of LLM context: appending the
@@ -357,6 +369,29 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand("file-diff-threshold", {
+    description: msgs.dirThresholdCommandDesc,
+    handler: async (args, ctx) => {
+      const arg = args.trim().toLowerCase();
+      if (arg === "" || arg === "status") {
+        ctx.ui.notify(msgs.dirThresholdStatus(config.dirThreshold), "info");
+        return;
+      }
+      const n = Number.parseInt(arg, 10);
+      if (!Number.isFinite(n) || n < 2) {
+        ctx.ui.notify(msgs.dirThresholdStatus(config.dirThreshold), "warning");
+        return;
+      }
+      config.dirThreshold = n;
+      try {
+        writeConfigFile({ dirThreshold: n });
+        ctx.ui.notify(msgs.dirThresholdSet(n), "info");
+      } catch (e) {
+        ctx.ui.notify(`Failed to save config: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    },
+  });
+
   pi.registerShortcut("ctrl+q", {
     description: msgs.shortcutDesc,
     handler: async (ctx) => {
@@ -385,6 +420,7 @@ export default function (pi: ExtensionAPI): void {
             undefined,
             msgs,
             () => tui.terminal.rows,
+            config.dirThreshold,
           );
           return panel;
         },

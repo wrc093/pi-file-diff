@@ -61,7 +61,7 @@ describe("git integration: classification in a real repo", () => {
       const tracked = await detectTrackedFiles(dir);
       const payload = buildPayload(t.all, (abs) => abs.replace(dir + "/", ""), tracked)!;
 
-      const byFile = new Map(payload.files.map((f) => [f.file, f.tracked]));
+      const byFile = new Map(payload.entries.map((e) => [e.path, e.tracked]));
       assert.equal(byFile.get("tracked.txt"), true, "modified git-tracked file stays tracked");
       assert.equal(byFile.get("new.txt"), false, "write-created file is untracked");
       assert.equal(byFile.get("gen.txt"), false, "bash-created file is untracked");
@@ -89,7 +89,7 @@ describe("git integration: classification in a real repo", () => {
 
       const tracked = await detectTrackedFiles(dir);
       const payload = buildPayload(t.all, (abs) => abs.replace(dir + "/", ""), tracked)!;
-      assert.equal(payload.files[0]!.tracked, true, "git ls-files includes staged files");
+      assert.equal(payload.entries[0]!.tracked, true, "git ls-files includes staged files");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -104,7 +104,7 @@ describe("git integration: classification in a real repo", () => {
 
       const tracked = await detectTrackedFiles(dir);
       const payload = buildPayload(t.all, (abs) => abs.replace(dir + "/", ""), tracked)!;
-      assert.equal(payload.files[0]!.tracked, false, "gitignored file is untracked");
+      assert.equal(payload.entries[0]!.tracked, false, "gitignored file is untracked");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -124,7 +124,7 @@ describe("git integration: classification in a real repo", () => {
       const payload = buildPayload(t.all, (abs) => abs.replace(dir + "/", ""), tracked)!;
       // git ls-files without --deleted still lists index entries; a staged
       // deletion removes it from the index — classify by best effort.
-      assert.equal(payload.files[0]!.tracked, false, "staged deletion leaves the index");
+      assert.equal(payload.entries[0]!.tracked, false, "staged deletion leaves the index");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -142,7 +142,7 @@ describe("git integration: classification in a real repo", () => {
 
       const tracked = await detectTrackedFiles(join(dir, "pkg"));
       const payload = buildPayload(t.all, (abs) => abs.replace(join(dir, "pkg") + "/", ""), tracked)!;
-      assert.equal(payload.files[0]!.tracked, true, "relative to the subdirectory cwd");
+      assert.equal(payload.entries[0]!.tracked, true, "relative to the subdirectory cwd");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -160,8 +160,8 @@ describe("git integration: non-repo workspace", () => {
       const tracked = await detectTrackedFiles(dir);
       assert.equal(tracked, null, "no git → null");
       const payload = buildPayload(t.all, (abs) => abs.replace(dir + "/", ""), tracked)!;
-      assert.equal(payload.files[0]!.tracked, undefined);
-      assert.equal(payload.files[1]!.tracked, undefined);
+      assert.equal(payload.entries[0]!.tracked, undefined);
+      assert.equal(payload.entries[1]!.tracked, undefined);
 
       const lines = buildSummaryText(payload);
       assert.ok(!lines.some((l) => l.startsWith("git ")), "no git section headers");

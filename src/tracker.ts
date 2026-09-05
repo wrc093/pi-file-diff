@@ -40,6 +40,10 @@ export interface TrackedChange {
   /** Latest known content (write content, post-edit read, or last bash
    *  scan) — the baseline for incremental bash diffs. */
   knownContent?: string;
+  /** Settled-run stamp of the last real mutation (see ChangeTracker.beginRun).
+   *  Automatic receipts are filtered to the current run's stamp, so files
+   *  changed by earlier tasks stay out of later receipts. */
+  runStamp?: number;
 }
 
 export interface PatchStats {
@@ -87,6 +91,8 @@ export const MAX_BASH_FILES = 100;
 export const MAX_SCAN_DIRS = 2_000;
 /** Workspace file-count threshold for auto mode bash tracking (3s budget). */
 export const DEFAULT_BASH_THRESHOLD = 200_000;
+/** Min changed files in a cwd subdirectory before it collapses into one entry. */
+export const DEFAULT_DIR_THRESHOLD = 5;
 /** Tolerance for coarse filesystem mtime resolution (ms). */
 export const MTIME_GUARD_MS = 1_000;
 
@@ -132,10 +138,22 @@ export class ChangeTracker {
   private mutationCount = 0;
   /** Absolute paths excluded from diff stats (dirs or files; live set). */
   private excludePaths: ReadonlySet<string> = new Set();
+  /** Current settled-run stamp; incremented by beginRun(). */
+  private runStamp = 0;
 
   /** Total number of recorded mutations (edit/write/bash/flag) — monotonic. */
   get mutations(): number {
     return this.mutationCount;
+  }
+
+  /** Stamp of the current settled run (0 before the first beginRun). */
+  get currentRunStamp(): number {
+    return this.runStamp;
+  }
+
+  /** Mark a new user-visible task: files mutated from now on belong to it. */
+  beginRun(): void {
+    this.runStamp++;
   }
 
   constructor(cwd: string, extraIgnore?: ReadonlySet<string>, excludePaths?: ReadonlySet<string>) {
@@ -185,6 +203,15 @@ export class ChangeTracker {
     return this.changes.size;
   }
 
+  /**
+   * Tracked changes with real mutations in the given settled run. The full
+   * session list is `all`; automatic receipts must use this instead so
+   * earlier tasks' files stay isolated from later receipts.
+   */
+  changesInRun(stamp: number): TrackedChange[] {
+    return this.all.filter((c) => c.runStamp === stamp);
+  }
+
   recordEdit(filePath: string, patch: string | undefined): void {
     if (!patch) return;
     const abs = this.normalizePath(filePath);
@@ -202,6 +229,7 @@ export class ChangeTracker {
       // falls back to the (now current) edit patch chain instead of showing
       // outdated bash content.
       existing.bashDiff = undefined;
+      existing.runStamp = this.runStamp;
       if (truncated) existing.contentTruncated = true; // reuse flag: patch overflow
       return;
     }
@@ -213,6 +241,7 @@ export class ChangeTracker {
       insertions: stats.insertions,
       deletions: stats.deletions,
       firstTouchedAt: existing?.firstTouchedAt ?? Date.now(),
+      runStamp: this.runStamp,
       // kind transitions must keep the baseline (write → edit: the file's
       // content is unchanged, only the tracking kind changes)
       knownContent: existing?.knownContent,
@@ -236,6 +265,7 @@ export class ChangeTracker {
       insertions: lineCount,
       deletions: 0,
       firstTouchedAt: existing?.firstTouchedAt ?? Date.now(),
+      runStamp: this.runStamp,
       // knownContent intentionally NOT set here: the baseline refreshes at
       // END of run (refreshKnownContents), so tool writes inside the same
       // run stay part of the complete diff instead of becoming the baseline.
@@ -255,6 +285,7 @@ export class ChangeTracker {
       insertions: stats.insertions,
       deletions: stats.deletions,
       firstTouchedAt: Date.now(),
+      runStamp: this.runStamp,
       knownContent,
     });
   }
@@ -363,6 +394,7 @@ export class ChangeTracker {
             const stats = parsePatchStats(patch);
             existing.insertions = stats.insertions;
             existing.deletions = stats.deletions;
+            existing.runStamp = this.runStamp;
             this.mutationCount++;
           }
           if (current !== undefined) existing.knownContent = current;
@@ -370,6 +402,7 @@ export class ChangeTracker {
         }
         this.mutationCount++;
         existing.shellTouched = true;
+        existing.runStamp = this.runStamp;
         if (patch) {
           existing.bashDiff = patch;
           const stats = parsePatchStats(patch);
@@ -411,6 +444,7 @@ export class ChangeTracker {
           const stats = patch ? parsePatchStats(patch) : { insertions: 0, deletions: 0 };
           existing.insertions = stats.insertions;
           existing.deletions = stats.deletions;
+          existing.runStamp = this.runStamp;
           this.mutationCount++;
         }
         continue;
@@ -419,7 +453,10 @@ export class ChangeTracker {
       // (first shell flag, or a different diff) — repeated scans of an
       // already-deleted file must not re-count.
       const fresh = !existing.shellTouched || (patch !== undefined && patch !== existing.bashDiff);
-      if (fresh) this.mutationCount++;
+      if (fresh) {
+        this.mutationCount++;
+        existing.runStamp = this.runStamp;
+      }
       existing.shellTouched = true;
       if (patch && patch !== existing.bashDiff) {
         existing.bashDiff = patch;

@@ -104,7 +104,7 @@ describe("settled-run summaries", () => {
     const [summary] = api.summaries();
     assert.equal(api.summaries().length, 1);
     assert.equal(summary?.totalFiles, 2);
-    assert.deepEqual(summary?.files.map((file) => file.file).sort(), ["first.txt", "second.txt"]);
+    assert.deepEqual(summary?.entries.map((e) => e.path).sort(), ["first.txt", "second.txt"]);
   });
 
   it("keeps an earlier low-level run's changes when the final continuation is a no-op", async () => {
@@ -125,7 +125,7 @@ describe("settled-run summaries", () => {
     const [summary] = api.summaries();
     assert.equal(api.summaries().length, 1);
     assert.equal(summary?.totalFiles, 1);
-    assert.equal(summary?.files[0]?.file, "kept.txt");
+    assert.equal(summary?.entries[0]?.path, "kept.txt");
   });
 
   it("is idempotent when agent_settled is delivered twice", async () => {
@@ -152,5 +152,33 @@ describe("settled-run summaries", () => {
     await api.emit("agent_settled");
 
     assert.equal(api.summaries().length, 0);
+  });
+
+  it("isolates consecutive settled runs: each receipt shows only its own changes", async () => {
+    const api = startExtension();
+    await api.emit("session_start", {}, { cwd: dir });
+
+    // run 1: creates first.txt and settles
+    await api.emit("agent_start");
+    await settleInitialBaseline();
+    await recordWrite(api, join(dir, "first.txt"), "first\n");
+    await api.emit("agent_end", { willRetry: false });
+    await api.emit("agent_settled");
+    const [summary1] = api.summaries();
+    assert.deepEqual(summary1?.entries.map((e) => e.path), ["first.txt"]);
+
+    // run 2: a completely different task only touches second.txt
+    await api.emit("agent_start");
+    await settleInitialBaseline();
+    await recordWrite(api, join(dir, "second.txt"), "second\n");
+    await api.emit("agent_end", { willRetry: false });
+    await api.emit("agent_settled");
+
+    const summaries = api.summaries();
+    assert.equal(summaries.length, 2, "one receipt per task");
+    const summary2 = summaries[1]!;
+    assert.equal(summary2.totalFiles, 1, "run 2 receipt must not inherit run 1 files");
+    assert.deepEqual(summary2.entries.map((e) => e.path), ["second.txt"]);
+    assert.equal(summary2.entries[0]!.status, "A", "new file in this task reads as added");
   });
 });

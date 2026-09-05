@@ -41,6 +41,8 @@ Pi agent 可以通过 `write`、`edit` 修改文件，也可以通过 shell 间�
 
 摘要以 TUI 条目形式追加，不会重新进入模型上下文，也不会因为展示回执而额外唤醒 agent。`/file-diff` 仅用于你按需回看当前对话累计的改动，并不是触发自动回执的前提。
 
+每份自动回执只统计**本轮任务**（一次 `agent_start` → `agent_settled` 之间）实际改动的文件；之前任务的文件不会混入。整个会话的累计改动仍保留在扩展内部，可随时用 `/file-diff` 或 `ctrl+q` 面板回看。
+
 ## 为什么创建它
 
 “agent 到底改了什么？”这一问题的答案往往分散在工具调用、shell 输出和 Git 状态里。在下面的场景中尤其不方便：
@@ -123,7 +125,7 @@ pi install "$(pwd)"
 
 ## 命令
 
-扩展只提供三个主动命令，且职责明确：一个回答“改了什么”，一个控制“如何发现 shell 改动”，一个控制“哪些路径不值得进入审阅”。
+扩展只提供四个主动命令，且职责明确：一个回答“改了什么”，一个控制“如何发现 shell 改动”，一个控制“哪些路径不值得进入审阅”，一个调节“何时把目录折叠成一条”。
 
 ### `/file-diff` — 查看当前对话累计的变更集
 
@@ -179,6 +181,18 @@ pi install "$(pwd)"
 
 排除列表会保存到 `~/.pi/agent/file-diff.json`。尽量在对话较早阶段添加规则，然后运行 `/file-diff`，确认剩下的回执只保留真正需要审阅的文件。
 
+### `/file-diff-threshold` — 目录聚合阈值
+
+```text
+/file-diff-threshold [<数量>|status]
+```
+
+当一个目录下改动了大量文件时，回执与 `ctrl+q` 面板会把它们折叠成一条目录条目（新增整个目录只显示一行 `+ …/ (new dir · N files)`）。目录状态下归并：全部新增 → 新增目录；全部删除 → 删除目录；其余情况（混杂，或只有已有文件的内容变动）→ 修改目录。
+
+折叠只发生在当前工作区的子目录上，工作区根目录本身永不折叠；文件数少于阈值的目录仍逐个展示文件。在面板中选中目录条目后按 Enter/ctrl+q 进入目录，Esc/← 返回上一级。
+
+阈值默认 `5`，最小 `2`，改动即时生效；也可以写入配置文件或环境变量（见 [配置](#配置)）。
+
 ## 配置
 
 创建或编辑 `~/.pi/agent/file-diff.json`，再执行 `/reload` 或重启 Pi：
@@ -188,6 +202,7 @@ pi install "$(pwd)"
   "lang": "en",
   "bashTracking": "auto",
   "bashThreshold": 200000,
+  "dirThreshold": 5,
   "ignore": ["my_vendor"],
   "exclude": [".pi-dock/sessions"]
 }
@@ -198,10 +213,11 @@ pi install "$(pwd)"
 | `lang` | `en`、`zh` | `en` | 界面语言。 |
 | `bashTracking` | `auto`、`on`、`off` | `auto` | 是否扫描 shell 引起的改动。`auto` 会在工作区超过阈值时关闭扫描。 |
 | `bashThreshold` | 正整数 | `200000` | `auto` 模式使用的工作区文件数阈值。 |
+| `dirThreshold` | 整数 ≥ 2 | `5` | 目录聚合阈值：cwd 子目录下改动文件数达到该值即折叠成一条目录条目。 |
 | `ignore` | 字符串数组 | `[]` | 额外忽略的目录名，不区分大小写。 |
 | `exclude` | 字符串数组 | `[]` | 不追踪、不展示的文件或目录路径。 |
 
-环境变量 `PI_FILE_DIFF_LANG` 和 `PI_FILE_DIFF_BASH_TRACKING` 的优先级高于配置文件。
+环境变量 `PI_FILE_DIFF_LANG`、`PI_FILE_DIFF_BASH_TRACKING` 和 `PI_FILE_DIFF_DIR_THRESHOLD` 的优先级高于配置文件。
 
 ## 追踪原理
 
