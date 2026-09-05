@@ -10,6 +10,8 @@ import {
   splitContentLines,
   splitPatchLines,
   type ColorFn,
+  type EntryStatus,
+  type SummaryEntry,
   type SummaryPayload,
 } from "../render.ts";
 import { zhMessages } from "../i18n.ts";
@@ -569,6 +571,34 @@ describe("dirStatuses baseline-derived directory status", () => {
     const line = buildSummaryText(payload).find((l) => l.includes("src/"))!;
     assert.ok(line.startsWith("- "), "deleted dir keeps the minus icon");
     assert.ok(line.includes("(6 files deleted)"));
+  });
+});
+
+describe("sortEntries no-diff deprioritization", () => {
+  it("moves no-diff entries after regular entries (stable)", () => {
+    const make = (path: string, noDiff?: boolean, status: EntryStatus = "M"): SummaryEntry => ({
+      kind: "file",
+      path,
+      status,
+      insertions: 0,
+      deletions: 0,
+      fileCount: 1,
+      noDiff,
+    });
+    const payload: SummaryPayload = {
+      entries: [make("z.bin", true), make("a.ts"), make("b.md"), make("c.bin", true)],
+      totalFiles: 4,
+      totalInsertions: 0,
+      totalDeletions: 0,
+    };
+    const lines = buildSummaryText(payload);
+    const order = ["a.ts", "b.md", "z.bin", "c.bin"];
+    let prev = -1;
+    for (const name of order) {
+      const idx = lines.findIndex((l) => l.includes(name));
+      assert.ok(idx > prev, `${name} appears after the previous entry`);
+      prev = idx;
+    }
   });
 });
 

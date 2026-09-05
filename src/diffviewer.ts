@@ -25,6 +25,7 @@ import {
   collapseEntries,
   effectiveStatus,
   renderEntryLine,
+  sortEntries,
   type ColorFn,
   type EntryNode,
 } from "./render.ts";
@@ -322,7 +323,7 @@ export class FileDiffPanel {
   private levelEntries(): EntryNode[] {
     const base =
       this.trail.length > 0 ? (this.trail[this.trail.length - 1]!.children ?? []) : this.root;
-    const entries = collapseEntries(base, this.threshold);
+    const entries = sortEntries(collapseEntries(base, this.threshold));
     return entries.some((e) => e.tracked !== undefined) ? groupEntries(entries) : entries;
   }
 

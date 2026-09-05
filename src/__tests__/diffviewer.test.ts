@@ -541,3 +541,17 @@ describe("FileDiffPanel pagination", () => {
     assert.ok(panel.render(80).some((l) => l.includes("Page 2/2")));
   });
 });
+
+describe("FileDiffPanel no-diff ordering", () => {
+  it("shows the no-diff entry last in the list", () => {
+    const files: PanelFile[] = [
+      { path: "bin.dat", change: change({ path: "/work/proj/bin.dat", kind: "bash", insertions: 0, deletions: 0 }) },
+      { path: "normal.txt", change: change({ path: "/work/proj/normal.txt", kind: "write", insertions: 2, deletions: 0, content: "a\nb\n" }) },
+    ];
+    const { panel } = makePanel(files);
+    const out = panel.render(80);
+    const binIdx = out.findIndex((l) => l.includes("bin.dat"));
+    const normalIdx = out.findIndex((l) => l.includes("normal.txt"));
+    assert.ok(binIdx > normalIdx, "no-diff file is listed after the regular file");
+  });
+});

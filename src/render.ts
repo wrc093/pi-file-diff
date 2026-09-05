@@ -268,6 +268,15 @@ function stripEntry(node: EntryNode): SummaryEntry {
 }
 
 /**
+ * No-diff entries (binary / oversized / snapshot-missing) sink below the
+ * regular entries so they do not crowd the top of the receipt or panel.
+ * Stable: keeps the original relative order of everything else.
+ */
+export function sortEntries<T extends { noDiff?: boolean }>(entries: readonly T[]): T[] {
+  return [...entries].sort((a, b) => Number(a.noDiff === true) - Number(b.noDiff === true));
+}
+
+/**
  * Build the summary payload from tracked changes.
  *
  * Contains only aggregated display entries — diff bodies stay in the
@@ -450,7 +459,7 @@ export function buildSummaryText(
   if (payload.totalDeletions > 0) header.push(fg("error", `-${payload.totalDeletions}`));
   lines.push(header.join("  "));
 
-  const shown = payload.entries.slice(0, MAX_FILES);
+  const shown = sortEntries(payload.entries).slice(0, MAX_FILES);
   const hasGitInfo = shown.some((e) => e.tracked !== undefined);
 
   if (!hasGitInfo) {
