@@ -231,7 +231,7 @@ describe("buildSummaryText", () => {
 
   it("renders file lines with icons and shell marker", () => {
     const lines = buildSummaryText(payload);
-    assert.ok(lines.some((l) => l.startsWith("~ src/a.ts  +2 -1")));
+    assert.ok(lines.some((l) => l.startsWith("M src/a.ts  +2 -1")));
     assert.ok(lines.some((l) => l.startsWith("+ n.ts  +2")));
     assert.ok(lines.some((l) => l.endsWith(" (shell)")));
   });
@@ -320,7 +320,7 @@ describe("buildSummaryText", () => {
     };
     const lines = buildSummaryText(empty);
     assert.equal(lines[0], "1 file changed");
-    assert.equal(lines[1], "~ x.ts (shell)");
+    assert.equal(lines[1], "M x.ts (shell)");
   });
 });
 
@@ -441,8 +441,8 @@ describe("buildSummaryText git grouping", () => {
     const ti = lines.findIndex((l) => l === "git tracked files:");
     const ui = lines.findIndex((l) => l === "git untracked files:");
     assert.ok(ti >= 0 && ui > ti, "tracked section must come first");
-    assert.ok(lines.slice(ti + 1, ui).some((l) => l.startsWith("~ src/a.ts")));
-    assert.ok(lines.slice(ui + 1).some((l) => l.startsWith("~ gen.txt")));
+    assert.ok(lines.slice(ti + 1, ui).some((l) => l.startsWith("M src/a.ts")));
+    assert.ok(lines.slice(ui + 1).some((l) => l.startsWith("M gen.txt")));
     assert.ok(lines.slice(ui + 1).some((l) => l.startsWith("+ new.ts")));
   });
 
@@ -486,6 +486,52 @@ describe("buildSummaryText git grouping", () => {
   });
 });
 
+describe("buildSummaryText no-diff marker", () => {
+  it("labels shell changes without a computable diff", () => {
+    const payload: SummaryPayload = {
+      entries: [
+        { kind: "file", path: "logs_2.sqlite-wal", status: "M", insertions: 0, deletions: 0, fileCount: 1, source: "shell", noDiff: true },
+        { kind: "file", path: "readme.txt", status: "M", insertions: 3, deletions: 1, fileCount: 1, source: "shell" },
+      ],
+      totalFiles: 2,
+      totalInsertions: 3,
+      totalDeletions: 1,
+    };
+    const lines = buildSummaryText(payload);
+    const binary = lines.find((l) => l.includes("logs_2.sqlite-wal"))!;
+    assert.ok(binary.includes("(no diff — file too large/binary or snapshot missing)"));
+    assert.ok(!lines.some((l) => l.includes("readme.txt") && l.includes("no diff")), "diffable shell change keeps no marker");
+  });
+
+  it("renders the Chinese no-diff marker", () => {
+    const payload: SummaryPayload = {
+      entries: [
+        { kind: "file", path: "logs_2.sqlite-wal", status: "M", insertions: 0, deletions: 0, fileCount: 1, source: "shell", noDiff: true },
+      ],
+      totalFiles: 1,
+      totalInsertions: 0,
+      totalDeletions: 0,
+    };
+    const lines = buildSummaryText(payload, undefined, zhMessages);
+    assert.ok(lines.some((l) => l.includes("(无 diff — 文件过大/二进制或快照缺失)")));
+  });
+});
+
+describe("buildPayload no-diff detection", () => {
+  it("flags bash changes without a diff as noDiff", () => {
+    const payload = buildPayload(
+      [
+        change({ path: "/work/proj/wal.sqlite-wal", kind: "bash", insertions: 0, deletions: 0 }),
+        change({ path: "/work/proj/txt.log", kind: "bash", insertions: 2, deletions: 0, bashDiff: "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-a\n+b\n" }),
+      ],
+      idPath,
+    )!;
+    const byPath = new Map(payload.entries.map((e) => [e.path, e.noDiff]));
+    assert.equal(byPath.get("wal.sqlite-wal"), true);
+    assert.equal(byPath.get("txt.log"), false);
+  });
+});
+
 describe("splitPatchLines jsdiff format", () => {
   it("filters Index:/==== decoration lines", () => {
     const patch = [
@@ -522,7 +568,7 @@ describe("buildSummaryText file-level status", () => {
     assert.ok(deleted.includes("\x1b[9mold.ts\x1b[29m"), "filename should be struck through");
     assert.ok(deleted.includes("(deleted)"));
     const modified = lines.find((l) => l.includes("mod.ts"))!;
-    assert.ok(modified.startsWith("~ mod.ts"));
+    assert.ok(modified.startsWith("M mod.ts"));
     assert.ok(!modified.includes("new file") && !modified.includes("deleted"));
   });
 

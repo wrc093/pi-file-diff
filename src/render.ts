@@ -36,6 +36,8 @@ export interface EntryNode {
   fileCount: number;
   /** Uniform source marker; undefined when mixed or none */
   source?: EntrySource;
+  /** True for shell changes without a computable diff (binary, too large, snapshot missing) */
+  noDiff?: boolean;
   /** git: true = all tracked, false = all untracked, undefined = mixed / no git info */
   tracked?: boolean;
   /** dir only — raw children (uncollapsed) */
@@ -116,6 +118,7 @@ interface RawNode {
   deletions: number;
   fileCount: number;
   source?: EntrySource;
+  noDiff?: boolean;
   tracked?: boolean;
   children: RawNode[];
   change?: TrackedChange;
@@ -154,6 +157,7 @@ export function buildChangeTree(
       deletions: item.change.deletions,
       fileCount: 1,
       source: fileSource(item.change),
+      noDiff: item.change.kind === "bash" && item.change.bashDiff === undefined,
       tracked: item.tracked,
       children: [],
       change: item.change,
@@ -312,20 +316,13 @@ function iconFor(status: EntryStatus): { icon: string; color: ThemeColorName } {
     case "D":
       return { icon: "-", color: "error" };
     default:
-      return { icon: "~", color: "warning" };
+      return { icon: "M", color: "warning" };
   }
 }
 
-/** File entries use `~` for content modifications; directory entries use `M`. */
+/** File and directory entries share the same icon set: + added, - deleted, M modified. */
 function dirIconFor(status: EntryStatus): { icon: string; color: ThemeColorName } {
-  switch (status) {
-    case "A":
-      return { icon: "+", color: "success" };
-    case "D":
-      return { icon: "-", color: "error" };
-    default:
-      return { icon: "M", color: "warning" };
-  }
+  return iconFor(status);
 }
 
 function renderCounts(
@@ -352,6 +349,7 @@ export function renderFileLine(
     insertions: number;
     deletions: number;
     source?: EntrySource;
+    noDiff?: boolean;
   },
   fg: ColorFn,
   msgs: Messages,
@@ -361,6 +359,7 @@ export function renderFileLine(
   const parts: string[] = [fg(color, icon), " ", fg("dim", pathText)];
   parts.push(...renderCounts(f, fg));
   parts.push(...renderSource(f, fg, msgs));
+  if (f.noDiff) parts.push(fg("dim", msgs.noDiffMarker));
   if (f.status === "A") parts.push(fg("dim", msgs.newFileMarker));
   else if (f.status === "D") parts.push(fg("dim", msgs.deletedFileMarker));
   return parts.join("");

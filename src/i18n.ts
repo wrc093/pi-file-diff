@@ -62,6 +62,8 @@ export interface Messages {
   diffFooter: string;
   /** Placeholder when a shell change has no computable diff. */
   noDiffContent: string;
+  /** Short no-diff marker for summary/list lines (bash change without a diff). */
+  noDiffMarker: string;
   /** Placeholder when a change has no diff at all. */
   noDiff: string;
   /** Note shown above the full content of an added file. */
@@ -119,6 +121,7 @@ export const enMessages: Messages = {
   listFooterDir: "\u2191\u2193 or wheel: switch \u00b7 Enter: open \u00b7 \u2190/Esc: up one level",
   diffFooter: "\u2191\u2193 scroll \u00b7 \u2190/Esc: back \u00b7 Enter: close",
   noDiffContent: "(shell change, no diff \u2014 file too large/binary or snapshot missing)",
+  noDiffMarker: " (no diff \u2014 file too large/binary or snapshot missing)",
   noDiff: "(no diff content)",
   newFileFull: "(new file \u2014 full content below)",
   deletedFileFull: "(file deleted \u2014 original content below)",
@@ -159,6 +162,7 @@ export const zhMessages: Messages = {
   listFooterDir: "\u2191\u2193/滚轮 切换 \u00b7 Enter 打开 \u00b7 \u2190/Esc 返回上一级",
   diffFooter: "\u2191\u2193 滚动 · \u2190/Esc 返回列表 · Enter 关闭",
   noDiffContent: "(shell 修改，无 diff 内容 — 文件过大/二进制或快照缺失)",
+  noDiffMarker: " (无 diff — 文件过大/二进制或快照缺失)",
   noDiff: "(无 diff 内容)",
   newFileFull: "(新文件 — 以下为完整内容)",
   deletedFileFull: "(文件已删除 — 以下为原内容)",

@@ -490,7 +490,7 @@ export class FileDiffPanel {
     const fit = (line: string) => (width > 0 && line.length > width ? line.slice(0, width) : line);
 
     const status = entry.status;
-    const icon = status === "A" ? "+" : status === "D" ? "-" : "~";
+    const icon = status === "A" ? "+" : status === "D" ? "-" : "M";
     const counts: string[] = [];
     if (entry.insertions > 0) counts.push(`+${entry.insertions}`);
     if (entry.deletions > 0) counts.push(`-${entry.deletions}`);
