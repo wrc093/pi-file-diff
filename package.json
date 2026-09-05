@@ -1,6 +1,6 @@
 {
   "name": "pi-file-diff",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "pi-coding-agent extension: per-conversation file-change diff summary without git",
   "keywords": [
     "pi-package",
