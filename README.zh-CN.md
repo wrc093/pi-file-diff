@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/pi-file-diff"><img src="https://img.shields.io/npm/v/pi-file-diff?color=cb3837&label=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/pi-file-diff"><img src="https://img.shields.io/npm/dt/pi-file-diff?style=flat-square&color=cb3837" alt="npm downloads"></a>
   <a href="https://pi.dev/packages/pi-file-diff"><img src="https://img.shields.io/badge/Pi-Package%20Catalog-7c3aed" alt="Pi Package Catalog"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT license"></a>
 </p>
@@ -229,9 +230,9 @@ pi install "$(pwd)"
 
 为了保持响应速度，扩展有以下边界：
 
-- shell 扫描只覆盖工作区，并跳过常见的依赖、构建产物、VCS、缓存和 IDE 目录；
-- 文本快照有单文件大小与总内容量上限。大型、二进制、无法读取或超出范围的文件，可能只显示路径而不显示文本 Diff；
-- 如果你并行手动编辑文件，且其时间戳落在任务窗口内，该变化可能被归因于 shell 改动。
+- shell 扫描只覆盖工作区，并跳过常见的依赖、构建产物、VCS、缓存、IDE 目录，以及 AI 工具运行时目录（`.codex`、`.claude`、`.cursor`、`.gemini`、`.pi` 等——这些目录会被其他并发的 agent/工具会话持续写入，默认忽略）；
+- 文本快照有单文件大小与总内容量上限。大型、二进制、无法读取或超出范围的文件，可能只显示路径而不显示文本 Diff（如 `*.sqlite-wal`）；
+- mtime 扫描只能判断「文件在任务窗口内被写过」，无法区分是 agent 还是其他进程写的。如果你并行编辑文件、或同一工作区内有其他 agent/工具正在运行（SQLite WAL/SHM、缓存、日志会持续变动），这些改动可能被归因到 shell。此时可以用 `/file-diff-exclude` 屏蔽对应目录，或在配置文件 `ignore` 中追加目录名；更好的做法是让 agent 在**项目目录**而非 HOME 这类包含运行时状态的目录中工作。
 
 ## 开发
 

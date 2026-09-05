@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/pi-file-diff"><img src="https://img.shields.io/npm/v/pi-file-diff?color=cb3837&label=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/pi-file-diff"><img src="https://img.shields.io/npm/dt/pi-file-diff?style=flat-square&color=cb3837" alt="npm downloads"></a>
   <a href="https://pi.dev/packages/pi-file-diff"><img src="https://img.shields.io/badge/Pi-Package%20Catalog-7c3aed" alt="Pi Package Catalog"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT license"></a>
 </p>
@@ -229,9 +230,9 @@ Create or edit `~/.pi/agent/file-diff.json`, then run `/reload` or restart Pi:
 
 Some intentional boundaries keep the extension responsive:
 
-- Shell scanning is limited to the workspace and skips common dependency, build, VCS, cache, and IDE directories.
-- Text snapshots are bounded by file size and total content limits. Large, binary, unreadable, or out-of-bound files may be represented without a textual diff.
-- A concurrently edited file whose timestamp falls inside the task window can be attributed to shell activity.
+- Shell scanning is limited to the workspace and skips common dependency, build, VCS, cache, and IDE directories, plus AI-tooling runtime state (`.codex`, `.claude`, `.cursor`, `.gemini`, `.pi`, … — these are written continuously by other agent/tool sessions, so they are ignored by default).
+- Text snapshots are bounded by file size and total content limits. Large, binary, unreadable, or out-of-bound files may be represented without a textual diff (e.g. `*.sqlite-wal`).
+- The mtime scan can only tell that a file was written within the task window — it cannot tell whether the agent or another process wrote it. If you edit files in parallel, or another agent/tool runs inside the same workspace (SQLite WAL/SHM, caches, logs keep changing), those writes can be attributed to shell activity. Use `/file-diff-exclude` to hide such directories, or add names to the `ignore` config; better yet, run the agent in a project directory instead of HOME or another state-heavy location.
 
 ## Development
 

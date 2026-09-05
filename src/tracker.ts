@@ -77,6 +77,11 @@ export const DEFAULT_IGNORED_DIRS = new Set([
   "coverage", ".coverage", ".nyc_output", "htmlcov",
   // IDE / OS
   ".idea", ".vscode", ".vs", "DerivedData", "Pods", "__MACOSX",
+  // Agent / AI tooling runtime state — churned by concurrent sessions even
+  // when the agent itself never touched them (sqlite WAL/SHM, caches, logs)
+  ".codex", ".claude", ".cursor", ".gemini", ".aider", ".pi",
+  // Package-manager caches (npm install activity is not project work)
+  ".npm",
   // Haskell / Elm
   ".stack-work", ".cabal", "elm-stuff",
 ]);

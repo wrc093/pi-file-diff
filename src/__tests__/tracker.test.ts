@@ -217,6 +217,10 @@ describe("walkWorkspace", () => {
     await writeFile(join(dir, "sub", "deep.txt"), "deep");
     await mkdir(join(dir, "node_modules"));
     await writeFile(join(dir, "node_modules", "ignored.txt"), "x");
+    await mkdir(join(dir, ".codex"));
+    await writeFile(join(dir, ".codex", "logs_2.sqlite-wal"), "x");
+    await mkdir(join(dir, ".pi", "agent", "npm"), { recursive: true });
+    await writeFile(join(dir, ".pi", "agent", "npm", "package.json"), "{}");
   });
 
   afterEach(async () => {
@@ -228,6 +232,14 @@ describe("walkWorkspace", () => {
     await walkWorkspace(dir, (abs) => found.push(abs));
     const names = found.map((f) => f.replace(dir + "/", "")).sort();
     assert.deepEqual(names, ["sub/deep.txt", "top.txt"]);
+  });
+
+  it("skips agent runtime state dirs by default (concurrent session churn)", async () => {
+    const found: string[] = [];
+    await walkWorkspace(dir, (abs) => found.push(abs));
+    const all = found.join("\n");
+    assert.ok(!all.includes(".codex"), "codex runtime state must be skipped");
+    assert.ok(!all.includes(".pi"), "pi runtime state must be skipped");
   });
 });
 
