@@ -45,6 +45,9 @@ export interface TrackedChange {
    *  Automatic receipts are filtered to the current run's stamp, so files
    *  changed by earlier tasks stay out of later receipts. */
   runStamp?: number;
+  /** How the file first entered tracking. Used to label files that have no
+   *  filesystem baseline (outside the workspace cwd, ignored directories). */
+  origin?: { kind: ChangeKind; runStamp: number };
 }
 
 export interface PatchStats {
@@ -181,6 +184,23 @@ export class ChangeTracker {
     return false;
   }
 
+  /**
+   * True when the path lies inside the walked workspace scope: under `cwd`
+   * and no path segment matches an ignored (built-in or configured) name.
+   * Paths outside this scope are never visited by the stat-only shell scan,
+   * so an absent walk entry must never be read as "deleted".
+   */
+  isScanEligible(abs: string): boolean {
+    const rel = relative(this.cwd, abs);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
+    for (const segment of rel.split(/[\\/]+/u)) {
+      const lower = segment.toLowerCase();
+      if (DEFAULT_IGNORED_DIRS.has(lower)) return false;
+      if (this.extraIgnore !== undefined && this.extraIgnore.has(lower)) return false;
+    }
+    return true;
+  }
+
   /** Normalize a tool-provided path to an absolute path. */
   normalizePath(filePath: string): string {
     return isAbsolute(filePath) ? filePath : resolve(this.cwd, filePath);
@@ -248,6 +268,7 @@ export class ChangeTracker {
       deletions: stats.deletions,
       firstTouchedAt: existing?.firstTouchedAt ?? Date.now(),
       runStamp: this.runStamp,
+      origin: existing?.origin ?? { kind: "edit", runStamp: this.runStamp },
       // kind transitions must keep the baseline (write → edit: the file's
       // content is unchanged, only the tracking kind changes)
       knownContent: existing?.knownContent,
@@ -272,6 +293,7 @@ export class ChangeTracker {
       deletions: 0,
       firstTouchedAt: existing?.firstTouchedAt ?? Date.now(),
       runStamp: this.runStamp,
+      origin: existing?.origin ?? { kind: "write", runStamp: this.runStamp },
       // knownContent intentionally NOT set here: the baseline refreshes at
       // END of run (refreshKnownContents), so tool writes inside the same
       // run stay part of the complete diff instead of becoming the baseline.
@@ -292,6 +314,7 @@ export class ChangeTracker {
       deletions: stats.deletions,
       firstTouchedAt: Date.now(),
       runStamp: this.runStamp,
+      origin: { kind: "bash", runStamp: this.runStamp },
       knownContent,
     });
   }
@@ -324,6 +347,8 @@ export class ChangeTracker {
     }
     const candidateDirs = new Set<string>();
     for (const c of this.changes.values()) {
+      // Only paths the walk can actually see have a meaningful dir baseline.
+      if (!this.isScanEligible(c.path)) continue;
       let parent = dirname(c.path);
       while (true) {
         const up = dirname(parent);
@@ -366,15 +391,22 @@ export class ChangeTracker {
   }
 
   /**
-   * Resolve file-level status (A/M/D) for every tracked change by comparing
-   * the per-run file set (files that existed when THIS run started) with the
-   * current disk state. stat-only; only touches already-tracked files.
-   * Best effort.
+   * Resolve file-level status (A/M/D) for every tracked change.
+   *
+   * Paths the stat-only walk covers use the per-run file set (`runSeen`: files
+   * that existed when THIS run started). Paths outside the walk scope
+   * (outside cwd, or inside ignored directories) have no filesystem baseline:
+   * their status comes from tracking history — a full-content `write` first
+   * observed in this run is added, everything else is a modification — and
+   * only disappearance is taken from disk.
+   *
+   * Added files then report their final content size, because for a file that
+   * did not exist at run start every line is an addition; earlier write/edit
+   * deltas would understate a freshly created file.
    */
   async resolveFileStatuses(runSeen: Set<string> | null): Promise<void> {
     if (!runSeen) return;
     for (const c of this.changes.values()) {
-      const existedInitially = runSeen.has(c.path);
       let existsNow = false;
       try {
         await stat(c.path);
@@ -382,11 +414,38 @@ export class ChangeTracker {
       } catch {
         // missing or unreadable — treat as gone
       }
+      if (!this.isScanEligible(c.path)) {
+        if (!existsNow) c.fileStatus = "D";
+        else {
+          const origin = c.origin;
+          c.fileStatus =
+            origin !== undefined && origin.kind === "write" && origin.runStamp === this.runStamp
+              ? "A"
+              : "M";
+        }
+        await this.normalizeAddedStats(c);
+        continue;
+      }
+      const existedInitially = runSeen.has(c.path);
       if (existedInitially && !existsNow) c.fileStatus = "D";
       else if (!existedInitially && existsNow) c.fileStatus = "A";
       else if (existedInitially && existsNow) c.fileStatus = "M";
       // neither existed initially nor now — leave undefined (kind default)
+      await this.normalizeAddedStats(c);
     }
+  }
+
+  /**
+   * For a file classified as added this run, every current line is an
+   * addition: report the final content size instead of earlier write/edit
+   * deltas (which would show a small patch count for a brand-new file).
+   */
+  private async normalizeAddedStats(change: TrackedChange): Promise<void> {
+    if (change.fileStatus !== "A") return;
+    const current = await readTextFile(change.path);
+    if (current === undefined) return;
+    change.insertions = countLines(current);
+    change.deletions = 0;
   }
 
   /**
@@ -479,6 +538,7 @@ export class ChangeTracker {
     if (snapshot) {
       for (const abs of snapshot.keys()) {
         if (recorded >= MAX_BASH_FILES) break;
+        if (!this.isScanEligible(abs)) continue;
         if (onDisk.has(abs) || this.changes.has(abs) || this.isExcluded(abs)) continue;
         this.recordBash(abs, createTwoFilesPatch(abs, abs, snapshot.get(abs)!, ""));
         recorded++;
@@ -487,9 +547,13 @@ export class ChangeTracker {
 
     // Deletions of already-tracked files (incl. bash-created ones, which the
     // snapshot does not contain): refresh to an all-deleted diff when old
-    // content is available, otherwise just flag it.
+    // content is available, otherwise just flag it. Only scannable paths are
+    // considered — a path outside the walk (cwd-outside or ignored dirs) is
+    // absent from `onDisk` because it was never visited, not because it is
+    // gone, so treating it as deleted would corrupt its stats.
     for (const abs of this.changes.keys()) {
       if (recorded >= MAX_BASH_FILES) break;
+      if (!this.isScanEligible(abs)) continue;
       if (onDisk.has(abs) || this.isExcluded(abs)) continue;
       const existing = this.changes.get(abs)!;
       const old = existing.knownContent ?? snapshot?.get(abs);

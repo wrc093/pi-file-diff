@@ -749,3 +749,111 @@ describe("resolveDirStatuses", () => {
     assert.equal((await t.resolveDirStatuses(null)).size, 0);
   });
 });
+
+describe("workspace scope boundaries (cwd-outside and ignored paths)", () => {
+  let root: string;
+  let outside: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "pi-file-diff-root-"));
+    outside = await mkdtemp(join(tmpdir(), "pi-file-diff-outside-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  it("never marks a cwd-outside tracked file as shell-modified or deleted", async () => {
+    const file = join(outside, "notes.md");
+    await writeFile(file, "a\nb\nc\n");
+    const t = new ChangeTracker(root);
+    t.recordWrite(file, "a\nb\nc\n");
+
+    // The walk covers `root` only; the outside file's absence from it must
+    // not be read as a deletion.
+    await t.collectBashChanges(Date.now() - 5_000, new Map());
+
+    const c = t.all[0]!;
+    assert.equal(c.shellTouched, undefined);
+    assert.equal(c.kind, "write");
+    assert.equal(c.insertions, 3);
+    assert.equal(c.deletions, 0);
+  });
+
+  it("never marks a tracked file inside an ignored directory as deleted", async () => {
+    const file = join(root, "node_modules", "pkg", "index.js");
+    await mkdir(join(root, "node_modules", "pkg"), { recursive: true });
+    await writeFile(file, "x\n");
+    const t = new ChangeTracker(root);
+    t.recordWrite(file, "x\n");
+
+    await t.collectBashChanges(Date.now() - 5_000, new Map());
+
+    const c = t.all[0]!;
+    assert.equal(c.shellTouched, undefined);
+    assert.equal(c.insertions, 1);
+    assert.equal(c.deletions, 0);
+  });
+
+  it("classifies a cwd-outside file created and edited in one run as added, with final-content stats", async () => {
+    const file = join(outside, "spec.md");
+    await writeFile(file, "one\ntwo2\n");
+    const t = new ChangeTracker(root);
+    t.beginRun();
+    t.recordWrite(file, "one\ntwo\n");
+    t.recordEdit(file, editPatch(["@@ -2,1 +2,1 @@", "-two", "+two2"]));
+
+    await t.resolveFileStatuses(new Set());
+
+    const c = t.all[0]!;
+    assert.equal(c.fileStatus, "A", "full-content write first seen in this run");
+    assert.equal(c.insertions, 2, "a new file's final content lines are all additions");
+    assert.equal(c.deletions, 0);
+  });
+
+  it("classifies a cwd-outside file tracked in an earlier run as modified", async () => {
+    const file = join(outside, "spec.md");
+    await writeFile(file, "one\ntwo2\n");
+    const t = new ChangeTracker(root);
+    t.beginRun();
+    t.recordWrite(file, "one\ntwo\n");
+    await t.resolveFileStatuses(new Set());
+    assert.equal(t.all[0]!.fileStatus, "A");
+
+    t.beginRun();
+    t.recordEdit(file, editPatch(["@@ -2,1 +2,1 @@", "-two", "+two2"]));
+    await t.resolveFileStatuses(new Set());
+
+    const c = t.all[0]!;
+    assert.equal(c.fileStatus, "M", "already tracked before this run → modification");
+  });
+
+  it("marks a cwd-outside tracked file that disappeared as deleted", async () => {
+    const file = join(outside, "gone.md");
+    await writeFile(file, "x\n");
+    const t = new ChangeTracker(root);
+    t.beginRun();
+    t.recordWrite(file, "x\n");
+    await rm(file);
+
+    await t.resolveFileStatuses(new Set());
+    assert.equal(t.all[0]!.fileStatus, "D");
+  });
+
+  it("counts a file created then edited in one run by its final content", async () => {
+    const file = join(root, "new.md");
+    await writeFile(file, "one\ntwo2\n");
+    const t = new ChangeTracker(root);
+    t.beginRun();
+    t.recordWrite(file, "one\ntwo\n");
+    t.recordEdit(file, editPatch(["@@ -2,1 +2,1 @@", "-two", "+two2"]));
+
+    await t.resolveFileStatuses(new Set());
+
+    const c = t.all[0]!;
+    assert.equal(c.fileStatus, "A");
+    assert.equal(c.insertions, 2);
+    assert.equal(c.deletions, 0);
+  });
+});

@@ -231,6 +231,7 @@ Create or edit `~/.pi/agent/file-diff.json`, then run `/reload` or restart Pi:
 Some intentional boundaries keep the extension responsive:
 
 - Shell scanning is limited to the workspace and skips common dependency, build, VCS, cache, and IDE directories, plus AI-tooling runtime state (`.codex`, `.claude`, `.cursor`, `.gemini`, `.pi`, … — these are written continuously by other agent/tool sessions, so they are ignored by default).
+- Files tracked by `write`/`edit` outside that scanned scope (a project outside the session workspace, or inside an ignored directory) are still listed from the tool result, but the shell scan neither flags them as shell-modified nor reclassifies them as deleted.
 - Text snapshots are bounded by file size and total content limits. Large, binary, unreadable, or out-of-bound files may be represented without a textual diff (e.g. `*.sqlite-wal`).
 - The mtime scan can only tell that a file was written within the task window — it cannot tell whether the agent or another process wrote it. If you edit files in parallel, or another agent/tool runs inside the same workspace (SQLite WAL/SHM, caches, logs keep changing), those writes can be attributed to shell activity. Use `/file-diff-exclude` to hide such directories, or add names to the `ignore` config; better yet, run the agent in a project directory instead of HOME or another state-heavy location.
 
