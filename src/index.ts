@@ -12,7 +12,12 @@ import { join } from "node:path";
 import { Text } from "@earendil-works/pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { isBashToolResult, isEditToolResult, isWriteToolResult } from "@earendil-works/pi-coding-agent";
+import {
+  isBashToolResult,
+  isEditToolResult,
+  isPowerShellToolResult,
+  isWriteToolResult,
+} from "@earendil-works/pi-coding-agent";
 import { ChangeTracker } from "./tracker.ts";
 import { buildPayload, type EntryStatus, type SummaryPayload } from "./render.ts";
 import { createSummaryEntryRenderer } from "./renderer.ts";
@@ -145,7 +150,7 @@ export default function (pi: ExtensionAPI): void {
       }
     } else if (isWriteToolResult(event)) {
       tracker.recordWrite(event.input.path as string, event.input.content as string);
-    } else if (isBashToolResult(event)) {
+    } else if (isBashToolResult(event) || isPowerShellToolResult(event)) {
       bashRan = true;
     }
   });
